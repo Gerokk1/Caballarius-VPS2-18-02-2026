@@ -39,8 +39,10 @@ Cblrs-Kraps-2026/
 
 # === Data — VPS2 mirror ===
 
-# Backups (trop volumineux pour git)
-data/backups/
+# Backups — binaires/archives ignores, SQL gardes
+data/backups/*.tar.gz
+data/backups/*.rar
+data/backups/*.zip
 
 # OpenClaw config (contient API keys)
 data/openclaw/config/

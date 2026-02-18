@@ -1,0 +1,29 @@
+# Environment
+.env
+.env.local
+.env.production
+
+# Ne JAMAIS push les credentials
+BRAIN/CREDENTIALS/
+BRAIN/CONFIG/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Logs
+*.log
+
+# Temporary files
+temp-ssh.ps1

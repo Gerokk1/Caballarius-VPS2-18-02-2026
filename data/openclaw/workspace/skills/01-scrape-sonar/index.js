@@ -44,6 +44,7 @@ const VALID_CATEGORIES = new Set([
 
 // Mapping mots courants → catégorie ENUM
 const CATEGORY_ALIASES = {
+  'accommodation': 'albergue', 'hébergement': 'albergue', 'lodging': 'albergue',
   'auberge': 'albergue', 'hostel': 'albergue', 'refugio': 'albergue', 'refuge': 'albergue', 'albergue': 'albergue',
   'hotel': 'hotel', 'hôtel': 'hotel', 'hostal': 'hotel',
   'gîte': 'gite', 'gite': 'gite', "chambre d'hôte": 'gite', "chambre d'hotes": 'gite', 'casa rural': 'gite',
@@ -362,7 +363,8 @@ async function processLocality(db, locality, dryRun) {
   // 3. Parser la réponse JSON
   const parsed = extractJSON(result.content);
   if (!parsed || !Array.isArray(parsed.establishments)) {
-    console.log(`  [ERREUR PARSE] Réponse non-JSON: ${result.content.substring(0, 100)}...`);
+    console.log(`  [ERREUR PARSE] Réponse non-JSON (${result.content.length} chars):`);
+    console.log(`  ${result.content.substring(0, 500)}`);
     if (!dryRun) {
       await setLocalityStatus(db, id, 'error');
       await logScrapeJob(db, id, 'error', 0, 0, 'JSON parse failed');

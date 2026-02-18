@@ -4,7 +4,8 @@
  *
  * Utilise perplexity/sonar via OpenRouter (recherche web réelle) pour lister
  * les établissements de chaque localité du Camino de Santiago.
- * Coût : $1/M input + $1/M output + $5/1K requêtes ≈ $0.001/localité.
+ * 2 passes par localité : hébergement+resto puis services.
+ * Coût : ~$0.002/localité × 2356 = ~$5.
  *
  * Usage:
  *   node index.js --batch 20
@@ -166,35 +167,48 @@ function parseArgs() {
   return opts;
 }
 
-// ─── OpenRouter / Perplexity Sonar ───────────────────────────────────────────
+// ─── OpenRouter / Perplexity Sonar — 2 passes ───────────────────────────────
 
-function buildPrompt(localityName, routeName) {
-  return `Recherche TOUS les établissements utiles aux pèlerins à "${localityName}" sur le chemin "${routeName}" (Camino de Santiago).
-
-Catégories à chercher :
-- Hébergement : albergue, hotel, gite, pension, camping
-- Restauration : restaurant, bar, cafe, boulangerie, epicerie, supermarche
-- Santé : pharmacie, medecin, hopital, podologue
-- Services : fontaine, laverie, banque, dab, poste, office_tourisme, location_velo, transport_bagages, taxi
-- Patrimoine : eglise, cathedrale, monastere, musee, monument, point_de_vue
-
-Pour CHAQUE établissement trouvé, donne :
-- name : nom exact de l'établissement
-- category : exactement un de [albergue, hotel, gite, pension, camping, restaurant, bar, cafe, boulangerie, epicerie, supermarche, pharmacie, medecin, hopital, podologue, fontaine, laverie, banque, dab, poste, office_tourisme, location_velo, transport_bagages, taxi, eglise, cathedrale, monastere, musee, monument, point_de_vue]
+const JSON_FIELDS = `Pour CHAQUE établissement, donne :
+- name : nom exact
+- category : exactement un de la liste ci-dessus
 - address : adresse complète
 - phone : numéro de téléphone (ou null)
 - email : adresse email (ou null)
 - website : URL du site web (ou null)
-- opening_hours : description des horaires (ou null)
-- google_rating : note Google sur 5 (nombre ou null)
-- google_reviews_count : nombre d'avis Google (nombre ou 0)
-- price_level : de 1 (bon marché) à 4 (luxe) (ou null)
-- services : liste de services notables (tableau de strings, ou [])
+- opening_hours : horaires (ou null)
+- google_rating : note Google /5 (nombre ou null)
+- google_reviews_count : nombre d'avis (nombre ou 0)
+- price_level : 1 (bon marché) à 4 (luxe) (ou null)
+- services : liste de services (tableau de strings, ou [])
 
-Réponds UNIQUEMENT avec du JSON valide, sans aucun texte avant ou après :
+Réponds UNIQUEMENT avec du JSON valide :
 {"establishments": [...]}
+Si tu ne trouves rien : {"establishments": []}`;
 
-Si la localité n'existe pas ou si tu ne trouves rien, réponds : {"establishments": []}`;
+function buildPromptPass1(localityName, routeName) {
+  return `Liste TOUS les hébergements et restaurants pour pèlerins à "${localityName}" sur le "${routeName}" (Camino de Santiago).
+
+Cherche spécifiquement :
+- Hébergements : albergue, hotel, gite, pension, camping (auberges de pèlerins, refuges, hostels, chambres d'hôtes, casa rural)
+- Restaurants et alimentation : restaurant, bar, cafe, boulangerie, epicerie, supermarche
+
+Sois exhaustif — liste TOUS les établissements existants, même les petits.
+
+${JSON_FIELDS}`;
+}
+
+function buildPromptPass2(localityName, routeName) {
+  return `Liste TOUS les services et points d'intérêt utiles aux pèlerins à "${localityName}" sur le "${routeName}" (Camino de Santiago).
+
+Cherche spécifiquement :
+- Santé : pharmacie, medecin, hopital, podologue
+- Services pratiques : fontaine, laverie, banque, dab, poste, office_tourisme, location_velo, transport_bagages, taxi
+- Patrimoine et culture : eglise, cathedrale, monastere, musee, monument, point_de_vue
+
+Sois exhaustif — liste TOUS les services existants, même les petits.
+
+${JSON_FIELDS}`;
 }
 
 async function callSonarPro(prompt, retryCount = 0) {
@@ -349,6 +363,28 @@ async function logScrapeJob(db, localityId, status, count, costUsd, errorLog) {
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
+async function runPass(passLabel, prompt) {
+  let result;
+  try {
+    result = await callSonarPro(prompt);
+  } catch (err) {
+    console.log(`  [ERREUR API ${passLabel}] ${err.message}`);
+    return { establishments: [], tokensIn: 0, tokensOut: 0, error: err.message };
+  }
+
+  const parsed = extractJSON(result.content);
+  if (!parsed || !Array.isArray(parsed.establishments)) {
+    console.log(`  [ERREUR PARSE ${passLabel}] Réponse non-JSON (${result.content.length} chars):`);
+    console.log(`  ${result.content.substring(0, 300)}`);
+    return { establishments: [], tokensIn: 0, tokensOut: 0, error: 'parse_failed' };
+  }
+
+  const tokensIn = result.usage.prompt_tokens || 0;
+  const tokensOut = result.usage.completion_tokens || 0;
+  console.log(`  ${passLabel} → ${parsed.establishments.length} établissements (${tokensIn}+${tokensOut} tokens)`);
+  return { establishments: parsed.establishments, tokensIn, tokensOut, error: null };
+}
+
 async function processLocality(db, locality, dryRun) {
   const { id, name, lat, lng, route_names } = locality;
   const routeName = route_names || 'Camino de Santiago';
@@ -358,55 +394,54 @@ async function processLocality(db, locality, dryRun) {
   // 1. Marquer in_progress
   if (!dryRun) await setLocalityStatus(db, id, 'in_progress');
 
-  // 2. Appeler Perplexity Sonar
-  const prompt = buildPrompt(name, routeName);
-  let result;
-  try {
-    result = await callSonarPro(prompt);
-  } catch (err) {
-    console.log(`  [ERREUR API] ${err.message}`);
+  // 2. PASSE 1 — Hébergement + restauration
+  const prompt1 = buildPromptPass1(name, routeName);
+  const pass1 = await runPass('PASS1-hebergement', prompt1);
+
+  await sleep(RATE_LIMIT_MS);
+
+  // 3. PASSE 2 — Services + patrimoine
+  const prompt2 = buildPromptPass2(name, routeName);
+  const pass2 = await runPass('PASS2-services', prompt2);
+
+  // 4. Erreur totale ?
+  if (pass1.error && pass2.error) {
     if (!dryRun) {
       await setLocalityStatus(db, id, 'error');
-      await logScrapeJob(db, id, 'error', 0, 0, err.message);
+      await logScrapeJob(db, id, 'error', 0, 0, `${pass1.error}; ${pass2.error}`);
     }
-    return { inserted: 0, skipped: 0, error: err.message };
+    return { inserted: 0, skipped: 0, error: `${pass1.error}; ${pass2.error}` };
   }
 
-  // 3. Parser la réponse JSON
-  const parsed = extractJSON(result.content);
-  if (!parsed || !Array.isArray(parsed.establishments)) {
-    console.log(`  [ERREUR PARSE] Réponse non-JSON (${result.content.length} chars):`);
-    console.log(`  ${result.content.substring(0, 500)}`);
-    if (!dryRun) {
-      await setLocalityStatus(db, id, 'error');
-      await logScrapeJob(db, id, 'error', 0, 0, 'JSON parse failed');
-    }
-    return { inserted: 0, skipped: 0, error: 'parse_failed' };
-  }
+  // 5. Fusionner les résultats des 2 passes
+  const allEstablishments = [...pass1.establishments, ...pass2.establishments];
+  const totalTokensIn = pass1.tokensIn + pass2.tokensIn;
+  const totalTokensOut = pass1.tokensOut + pass2.tokensOut;
+  const costUsd = (totalTokensIn / 1e6) * 1 + (totalTokensOut / 1e6) * 1 + 0.01; // 2 requêtes × $5/1K
 
-  const establishments = parsed.establishments;
-  console.log(`  Sonar → ${establishments.length} établissements trouvés`);
-
-  // 4. Coût estimé
-  const tokensIn = result.usage.prompt_tokens || 0;
-  const tokensOut = result.usage.completion_tokens || 0;
-  const costUsd = (tokensIn / 1e6) * 1 + (tokensOut / 1e6) * 1 + 0.005; // Sonar: $1/M in + $1/M out + $5/1K req
+  console.log(`  TOTAL: ${allEstablishments.length} établissements, ~$${costUsd.toFixed(4)}`);
 
   if (dryRun) {
     let mapped = 0;
-    for (const est of establishments) {
+    const seen = new Set();
+    for (const est of allEstablishments) {
       const cat = mapCategory(est.category);
-      const label = cat ? `✓ ${cat}` : `✗ "${est.category}"`;
+      const nameKey = (est.name || '').trim().toLowerCase();
+      const isDupe = seen.has(nameKey);
+      seen.add(nameKey);
+      const label = cat
+        ? (isDupe ? `~ ${cat} (doublon inter-pass)` : `✓ ${cat}`)
+        : `✗ "${est.category}"`;
       console.log(`    ${label} — ${est.name}`);
-      if (cat) mapped++;
+      if (cat && !isDupe) mapped++;
     }
-    console.log(`  [DRY RUN] ${mapped}/${establishments.length} catégorisés, ~$${costUsd.toFixed(4)}`);
-    return { inserted: mapped, skipped: establishments.length - mapped, error: null };
+    console.log(`  [DRY RUN] ${mapped} uniques catégorisés / ${allEstablishments.length} bruts, ~$${costUsd.toFixed(4)}`);
+    return { inserted: mapped, skipped: allEstablishments.length - mapped, error: null };
   }
 
-  // 5. Insérer en BDD
+  // 6. Insérer en BDD (ON DUPLICATE KEY UPDATE gère les doublons inter-pass)
   let inserted = 0, skipped = 0;
-  for (const est of establishments) {
+  for (const est of allEstablishments) {
     const estId = await insertEstablishment(db, id, lat, lng, est);
     if (estId) {
       await insertSource(db, estId, est);
@@ -417,7 +452,7 @@ async function processLocality(db, locality, dryRun) {
     }
   }
 
-  // 6. Mettre à jour le statut
+  // 7. Mettre à jour le statut
   await setLocalityStatus(db, id, 'done');
   await logScrapeJob(db, id, 'done', inserted, costUsd, null);
 
@@ -439,8 +474,8 @@ async function main() {
   }
 
   console.log('='.repeat(60));
-  console.log('SKILL 01 — Scrape Perplexity Sonar');
-  console.log(`Modèle: ${MODEL}`);
+  console.log('SKILL 01 — Scrape Perplexity Sonar (2 passes)');
+  console.log(`Modèle: ${MODEL} | 2 requêtes/localité`);
   console.log(`Batch: ${opts.batch} | Dry run: ${opts.dryRun} | Locality: ${opts.localityId || 'auto'} | Limit: ${opts.limit || 'none'}`);
   console.log('='.repeat(60));
 

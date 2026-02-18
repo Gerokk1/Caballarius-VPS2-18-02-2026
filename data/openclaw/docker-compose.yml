@@ -1,0 +1,24 @@
+services:
+  openclaw:
+    image: alpine/openclaw:latest
+    container_name: openclaw-bunker
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18789:18789"
+    volumes:
+      - /data/openclaw/config:/home/node/.openclaw
+      - /data/openclaw/workspace:/home/node/workspace
+    environment:
+      - NODE_ENV=production
+      - OPENCLAW_HOST=0.0.0.0
+      - HOST=0.0.0.0
+    networks:
+      - openclaw-isolated
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  openclaw-isolated:
+    driver: bridge

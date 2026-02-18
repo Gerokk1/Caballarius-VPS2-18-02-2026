@@ -36,3 +36,26 @@ Cblrs-Kraps-2026/
 
 # Claude
 .claude/
+
+# === Data — VPS2 mirror ===
+
+# Backups (trop volumineux pour git)
+data/backups/
+
+# OpenClaw config (contient API keys)
+data/openclaw/config/
+
+# OpenClaw workspace internals
+data/openclaw/workspace/.git/
+data/openclaw/workspace/.openclaw/
+data/openclaw/workspace/.pi/
+
+# Skill 00 — fichiers volumineux et temporaires
+data/openclaw/workspace/skills/00-import-gpx/extracted/
+data/openclaw/workspace/skills/00-import-gpx/downloads/
+data/openclaw/workspace/skills/00-import-gpx/venv/
+data/openclaw/workspace/skills/00-import-gpx/tmp/
+data/openclaw/workspace/skills/00-import-gpx/state.json
+
+# n8n data (runtime, pas code)
+data/n8n/data/

@@ -1,0 +1,62 @@
+{
+  "name": "Caballarius - Rapport quotidien",
+  "nodes": [
+    {
+      "name": "Cron 20h",
+      "type": "n8n-nodes-base.cron",
+      "position": [250, 300],
+      "parameters": {
+        "triggerTimes": { "item": [{ "hour": 20, "minute": 0 }] }
+      }
+    },
+    {
+      "name": "Stats Today",
+      "type": "n8n-nodes-base.mySql",
+      "position": [450, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT (SELECT COUNT(*) FROM establishments WHERE DATE(created_at) = CURDATE()) AS new_today, (SELECT COUNT(*) FROM establishments) AS total_establishments, (SELECT COUNT(*) FROM establishments WHERE scrape_status='scraped') AS scraped, (SELECT COUNT(*) FROM establishments WHERE scrape_status='enriched') AS enriched, (SELECT COUNT(*) FROM establishments WHERE scrape_status='site_generated') AS sites_generated, (SELECT COUNT(*) FROM establishments WHERE scrape_status='synced') AS synced, (SELECT COUNT(*) FROM localities WHERE scrape_status='done') AS localities_done, (SELECT COUNT(*) FROM localities WHERE scrape_status='pending') AS localities_pending, (SELECT COUNT(*) FROM scrape_jobs WHERE status='error' AND DATE(created_at) = CURDATE()) AS errors_today, (SELECT COUNT(*) FROM quality_checks WHERE DATE(created_at) = CURDATE()) AS qc_today, (SELECT COUNT(*) FROM quality_checks WHERE severity='critical' AND auto_resolved=FALSE) AS qc_critical_open, (SELECT COUNT(*) FROM pro_sites WHERE is_live=TRUE) AS sites_live"
+      }
+    },
+    {
+      "name": "Top Localities",
+      "type": "n8n-nodes-base.mySql",
+      "position": [450, 500],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT l.name, c.name_fr AS country, COUNT(e.id) AS nb_establishments FROM localities l JOIN regions r ON l.region_id = r.id JOIN countries c ON r.country_id = c.id LEFT JOIN establishments e ON e.locality_id = l.id GROUP BY l.id ORDER BY nb_establishments DESC LIMIT 5"
+      }
+    },
+    {
+      "name": "Generate Report (Kimi)",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [700, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headers": {
+          "Authorization": "Bearer {{$credentials.openrouterApiKey}}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "model": "moonshotai/kimi-k2.5",
+          "messages": [{"role": "user", "content": "Redige un rapport quotidien Caballarius en francais. Concis, professionnel, avec emojis pour les chiffres cles. Voici les stats:\n{{ JSON.stringify($json) }}\nTop localites:\n{{ JSON.stringify($node['Top Localities'].json) }}"}]
+        }
+      }
+    },
+    {
+      "name": "Send Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "position": [900, 300],
+      "parameters": {
+        "chatId": "{{$credentials.telegramChatId}}",
+        "text": "{{ $json.choices[0].message.content }}"
+      }
+    }
+  ],
+  "connections": {
+    "Cron 20h": { "main": [[ { "node": "Stats Today" }, { "node": "Top Localities" } ]] },
+    "Stats Today": { "main": [[ { "node": "Generate Report (Kimi)" } ]] },
+    "Generate Report (Kimi)": { "main": [[ { "node": "Send Telegram" } ]] }
+  }
+}

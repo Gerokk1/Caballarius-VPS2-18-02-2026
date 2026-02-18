@@ -1,0 +1,71 @@
+{
+  "name": "Caballarius - Controle qualite",
+  "nodes": [
+    {
+      "name": "Cron 2h",
+      "type": "n8n-nodes-base.cron",
+      "position": [250, 300],
+      "parameters": {
+        "triggerTimes": { "item": [{ "mode": "everyX", "value": 2, "unit": "hours" }] }
+      }
+    },
+    {
+      "name": "Query Recent Establishments",
+      "type": "n8n-nodes-base.mySql",
+      "position": [450, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT e.id, e.name, e.category, e.lat, e.lng, e.google_rating, e.price_level, e.address, l.name AS locality, l.lat AS loc_lat, l.lng AS loc_lng, (6371 * ACOS(COS(RADIANS(e.lat)) * COS(RADIANS(l.lat)) * COS(RADIANS(l.lng) - RADIANS(e.lng)) + SIN(RADIANS(e.lat)) * SIN(RADIANS(l.lat)))) AS distance_km FROM establishments e JOIN localities l ON e.locality_id = l.id WHERE e.created_at > NOW() - INTERVAL 2 HOUR ORDER BY e.created_at DESC LIMIT 50"
+      }
+    },
+    {
+      "name": "Check Duplicates",
+      "type": "n8n-nodes-base.mySql",
+      "position": [450, 500],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT e1.id AS id1, e2.id AS id2, e1.name, e1.address FROM establishments e1 JOIN establishments e2 ON e1.name = e2.name AND e1.address = e2.address AND e1.id < e2.id WHERE e1.created_at > NOW() - INTERVAL 24 HOUR"
+      }
+    },
+    {
+      "name": "Filter Suspects",
+      "type": "n8n-nodes-base.code",
+      "position": [650, 300],
+      "parameters": {
+        "jsCode": "// Filter establishments with issues:\n// - distance_km > 1 (wrong location)\n// - name empty or 'Unknown'\n// - price_level suspicious for category\nconst suspects = [];\nfor (const item of $input.all()) {\n  const d = item.json;\n  if (d.distance_km > 1) suspects.push({...d, issue: 'wrong_location', severity: 'critical'});\n  if (!d.name || d.name === 'Unknown') suspects.push({...d, issue: 'missing_data', severity: 'warning'});\n  if (d.category === 'albergue' && d.price_level >= 4) suspects.push({...d, issue: 'incoherent_price', severity: 'warning'});\n  if (d.category === 'hotel' && d.price_level === 0) suspects.push({...d, issue: 'incoherent_price', severity: 'info'});\n}\nreturn suspects.map(s => ({json: s}));"
+      }
+    },
+    {
+      "name": "Ask Kimi K2.5",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [850, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "headers": {
+          "Authorization": "Bearer {{$credentials.openrouterApiKey}}",
+          "Content-Type": "application/json"
+        },
+        "body": {
+          "model": "moonshotai/kimi-k2.5",
+          "messages": [{"role": "user", "content": "Analyse ces etablissements suspects du Camino de Santiago. Pour chacun, reponds OK ou PROBLEME avec une explication courte en francais:\n{{ JSON.stringify($json) }}"}]
+        }
+      }
+    },
+    {
+      "name": "Insert Quality Checks",
+      "type": "n8n-nodes-base.mySql",
+      "position": [1050, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO quality_checks (check_type, establishment_id, severity, description) VALUES ('{{ $json.issue }}', {{ $json.id }}, '{{ $json.severity }}', '{{ $json.kimi_analysis }}')"
+      }
+    }
+  ],
+  "connections": {
+    "Cron 2h": { "main": [[ { "node": "Query Recent Establishments" }, { "node": "Check Duplicates" } ]] },
+    "Query Recent Establishments": { "main": [[ { "node": "Filter Suspects" } ]] },
+    "Filter Suspects": { "main": [[ { "node": "Ask Kimi K2.5" } ]] },
+    "Ask Kimi K2.5": { "main": [[ { "node": "Insert Quality Checks" } ]] }
+  }
+}

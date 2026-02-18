@@ -1,0 +1,59 @@
+{
+  "name": "Caballarius - Planificateur missions",
+  "nodes": [
+    {
+      "name": "Cron 4h",
+      "type": "n8n-nodes-base.cron",
+      "position": [250, 300],
+      "parameters": {
+        "triggerTimes": {
+          "item": [
+            { "hour": 6 }, { "hour": 10 }, { "hour": 14 },
+            { "hour": 18 }, { "hour": 22 }, { "hour": 2 }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Query Pending Localities",
+      "type": "n8n-nodes-base.mySql",
+      "position": [450, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT l.id, l.name, l.lat, l.lng, c.name_fr AS country, c.priority FROM localities l JOIN regions r ON l.region_id = r.id JOIN countries c ON r.country_id = c.id WHERE l.scrape_status = 'pending' ORDER BY c.priority ASC, l.id ASC LIMIT 20"
+      }
+    },
+    {
+      "name": "Send to OpenClaw",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [650, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:18789/api/agent",
+        "authentication": "genericCredentialType",
+        "body": {
+          "message": "Scrape les localites suivantes avec le skill 01-scrape-google : {{ $json.localities }}",
+          "session_id": "planificateur-{{ $now.format('yyyy-MM-dd-HH') }}"
+        },
+        "headers": {
+          "Authorization": "Bearer {{$credentials.openclawToken}}",
+          "Content-Type": "application/json"
+        }
+      }
+    },
+    {
+      "name": "Log Job",
+      "type": "n8n-nodes-base.mySql",
+      "position": [850, 300],
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO scrape_jobs (job_type, target_type, target_id, status) VALUES ('google_places', 'locality', {{ $json.id }}, 'pending')"
+      }
+    }
+  ],
+  "connections": {
+    "Cron 4h": { "main": [[ { "node": "Query Pending Localities" } ]] },
+    "Query Pending Localities": { "main": [[ { "node": "Send to OpenClaw" } ]] },
+    "Send to OpenClaw": { "main": [[ { "node": "Log Job" } ]] }
+  }
+}

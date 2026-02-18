@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * SKILL 01-scrape-sonar — Scraping établissements via Perplexity Sonar Pro
+ * SKILL 01-scrape-sonar — Scraping établissements via Kimi K2.5
  *
- * Utilise perplexity/sonar-pro via OpenRouter pour chercher tous les
- * établissements de chaque localité du Camino de Santiago.
+ * Utilise moonshotai/kimi-k2.5 via OpenRouter (GRATUIT) pour lister
+ * les établissements de chaque localité du Camino de Santiago.
  *
  * Usage:
  *   node index.js --batch 20
@@ -25,7 +25,7 @@ const DB_CONFIG = {
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'perplexity/sonar-pro';
+const MODEL = 'moonshotai/kimi-k2.5';
 
 const RATE_LIMIT_MS = 2000;
 const MAX_RETRIES = 3;
@@ -147,7 +147,7 @@ function parseArgs() {
   return opts;
 }
 
-// ─── OpenRouter / Sonar Pro ─────────────────────────────────────────────────
+// ─── OpenRouter / Kimi K2.5 ─────────────────────────────────────────────────
 
 function buildPrompt(localityName, routeName) {
   return `Recherche TOUS les établissements utiles aux pèlerins à "${localityName}" sur le chemin "${routeName}" (Camino de Santiago).
@@ -345,7 +345,7 @@ async function processLocality(db, locality, dryRun) {
   // 1. Marquer in_progress
   if (!dryRun) await setLocalityStatus(db, id, 'in_progress');
 
-  // 2. Appeler Sonar Pro
+  // 2. Appeler Kimi K2.5
   const prompt = buildPrompt(name, routeName);
   let result;
   try {
@@ -371,12 +371,12 @@ async function processLocality(db, locality, dryRun) {
   }
 
   const establishments = parsed.establishments;
-  console.log(`  Sonar Pro → ${establishments.length} établissements trouvés`);
+  console.log(`  Kimi K2.5 → ${establishments.length} établissements trouvés`);
 
   // 4. Coût estimé
   const tokensIn = result.usage.prompt_tokens || 0;
   const tokensOut = result.usage.completion_tokens || 0;
-  const costUsd = (tokensIn * 3 + tokensOut * 15) / 1_000_000; // Sonar Pro pricing
+  const costUsd = 0; // Kimi K2.5 = GRATUIT sur OpenRouter
 
   if (dryRun) {
     let mapped = 0;
@@ -425,7 +425,7 @@ async function main() {
   }
 
   console.log('='.repeat(60));
-  console.log('SKILL 01 — Scrape Sonar Pro');
+  console.log('SKILL 01 — Scrape Kimi K2.5');
   console.log(`Modèle: ${MODEL}`);
   console.log(`Batch: ${opts.batch} | Dry run: ${opts.dryRun} | Locality: ${opts.localityId || 'auto'} | Limit: ${opts.limit || 'none'}`);
   console.log('='.repeat(60));

@@ -1,14 +1,16 @@
-# Skill 01 : Scrape Sonar Pro
+# Skill 01 : Scrape Kimi K2.5
 
-Scraper tous les établissements d'une localité via Perplexity Sonar Pro (OpenRouter).
+Scraper tous les établissements d'une localité via Kimi K2.5 (OpenRouter, GRATUIT).
 Remplace Google Places API — une seule requête par localité, pas de clé Google nécessaire.
+Kimi connaît beaucoup d'établissements de mémoire (données d'entraînement).
+On complètera avec du web scraping direct (Google Maps, Booking) pour les données manquantes.
 
 ## Modèle
-`perplexity/sonar-pro` via OpenRouter (clé déjà configurée)
+`moonshotai/kimi-k2.5` via OpenRouter (GRATUIT, clé déjà configurée)
 
 ## Fonctionnement
 1. Sélectionne les localités avec `scrape_status='pending'` (batch configurable)
-2. Pour chaque localité, envoie une requête Sonar Pro demandant TOUS les établissements
+2. Pour chaque localité, envoie une requête Kimi K2.5 demandant TOUS les établissements
 3. Parse la réponse JSON structurée
 4. Insère dans `establishments` + `establishment_sources`
 5. Met à jour `localities.scrape_status` et log dans `scrape_jobs`
@@ -39,12 +41,12 @@ node index.js --limit 100
 ```
 
 ## Rate limiting
-- 2 secondes entre chaque requête Sonar Pro
+- 2 secondes entre chaque requête Kimi K2.5
 - 3 retries max avec backoff exponentiel (2s, 4s, 8s)
 
 ## Coût
-- Sonar Pro via OpenRouter : ~$3/1000 requêtes
-- 2356 localités = ~$7 pour le scraping complet
+- Kimi K2.5 via OpenRouter : GRATUIT
+- 2356 localités = $0
 
 ## Pré-requis
 - `npm install mysql2` (dans le dossier du skill)

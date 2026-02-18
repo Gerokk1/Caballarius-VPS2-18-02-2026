@@ -63,10 +63,10 @@ N8N orchestre le pipeline de scraping en tant que superviseur. Les 4 workflows d
 ---
 
 ## Credentials requises (a configurer dans n8n)
-- MySQL : connexion a caballarius_staging (staging_user / Stg!Cblrs2026_QC#Secure)
+- MySQL : connexion a caballarius_staging (staging_user / [VOIR CREDENTIALS])
 - OpenRouter API key : pour Kimi K2.5 (workflows 02, 03)
 - Telegram Bot token + Chat ID : pour rapports et alertes (workflows 03, 04)
-- OpenClaw auth token : cblrs-openclaw-bunker-2026 (workflow 01)
+- OpenClaw auth token : [VOIR CREDENTIALS] (workflow 01)
 
 ## Notes
 - Les workflows sont des squelettes JSON. Ils doivent etre importes dans n8n via l'interface.

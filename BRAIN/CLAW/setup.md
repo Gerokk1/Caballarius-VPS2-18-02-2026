@@ -19,7 +19,7 @@ VPS2
   |           Port: 127.0.0.1:18789 (localhost UNIQUEMENT)
   |           User: node (1000)
   |           Bind: lan (0.0.0.0 dans container, 127.0.0.1 sur host)
-  |           Auth: token requis (cblrs-openclaw-bunker-2026)
+  |           Auth: token requis ([VOIR CREDENTIALS])
   |           Volumes: /data/openclaw/config -> /home/node/.openclaw
   |                    /data/openclaw/workspace -> /home/node/workspace
   |
@@ -90,7 +90,7 @@ cd /data/openclaw && sudo docker compose restart
 # Full restart (down + up)
 cd /data/openclaw && sudo docker compose down && sudo docker compose up -d
 # Test local
-curl -s -H 'Authorization: Bearer cblrs-openclaw-bunker-2026' http://127.0.0.1:18789/__openclaw__/canvas/
+curl -s -H 'Authorization: Bearer [VOIR CREDENTIALS]' http://127.0.0.1:18789/__openclaw__/canvas/
 ```
 
 ## Bugs rencontres

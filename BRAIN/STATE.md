@@ -1,9 +1,9 @@
 # ETAT ACTUEL DU PROJET — VPS2
 
-**Derniere mise a jour : 2026-02-18 18:10**
+**Derniere mise a jour : 2026-02-18 20:05**
 
 ## Resume
-VPS2 (cblrs.net) PLEINEMENT OPERATIONNEL. HTTPS actif. OpenClaw bunker mode + securite audit 25/25. BDD staging 14 tables, 38 pays, 305 routes, langues dynamiques. 8 skills custom (squelettes). 4 workflows n8n (squelettes JSON). Backup BDD : /data/backups/staging_2026-02-18.sql
+VPS2 (cblrs.net) PLEINEMENT OPERATIONNEL. HTTPS actif. OpenClaw bunker mode + securite audit 25/25. BDD staging 14 tables, 38 pays, 305 routes, 2356 localites, 1795 etapes, langues dynamiques. TOUTES les 305 routes ont des etapes (0 manquante). 8 skills custom (squelettes). 4 workflows n8n (squelettes JSON).
 
 ## Ce qui fonctionne
 - [x] https://cblrs.net → 200 (SSL, redirect HTTP→HTTPS)
@@ -44,9 +44,10 @@ countries, regions, routes, stages, localities, route_localities, establishments
 |-------|------|-------|
 | countries | 38 | Toute l'Europe, colonne languages JSON, priorites 1-38 |
 | routes | 305 | 17 pays, slug=code, total_km, gpx_file URL .rar |
-| regions | 0 | A peupler (extraire des GPX) |
-| localities | 0 | A peupler (extraire des GPX) |
-| stages | 0 | A peupler |
+| regions | 0 | A peupler |
+| localities | 2356 | Seeders VPS1 (778) + GPX/KML import (1578) |
+| stages | 1795 | 305/305 routes couvertes, km + d+/d- + heures |
+| route_localities | 2830 | Liens route-localite avec order_on_route |
 | establishments | 0 | A scraper (objectif 20-25K) |
 | Autres tables | 0 | Se rempliront au fil du pipeline |
 
@@ -59,11 +60,18 @@ countries, regions, routes, stages, localities, route_localities, establishments
 - staging_user : SELECT/INSERT/UPDATE (voir CREDENTIALS/)
 
 ### Sources de donnees
-- caminosantiago.org = SOURCE MASTER (305 routes, toute l'Europe, fichiers GPX .rar)
+- caminosantiago.org = SOURCE MASTER (305 routes KML/KMZ/GPX, 1599 localites geocodees)
+- VPS1 seeders = SOURCE ETAPES (43 chemins, 778 localites, 742 etapes detaillees avec GPS)
 - nco.ign.es = SOURCE VALIDATION (Espagne uniquement, IGN officiel)
 
+### Scripts importants sur VPS2
+- /tmp/parse_seeders.py : Parse seeders PHP VPS1 → localites + stages
+- /data/openclaw/workspace/skills/00-import-gpx/import_gpx.py : Download RAR, extract KML, geocode, insert
+- /data/openclaw/workspace/skills/00-import-gpx/complete_stages.py : Cree stages depuis KML/KMZ/GPX
+
 ### Backup
-- /data/backups/staging_2026-02-18.sql (83 Ko)
+- /data/backups/staging_2026-02-18.sql (83 Ko) — schema + pays + routes seulement
+- /data/backups/staging_2026-02-18_2005.sql (740 Ko) — complet avec 2356 localites + 1795 etapes
 
 ## Skills OpenClaw (8 custom)
 - [x] 8 skills dans /data/openclaw/workspace/skills/ (16 fichiers)
@@ -96,13 +104,15 @@ countries, regions, routes, stages, localities, route_localities, establishments
 ## CE QUI RESTE A FAIRE (prochaines sessions)
 ## ============================================================
 
-### PRIORITE 1 — Extraire localites depuis GPX (prochaine session)
-- [ ] Telecharger les 305 fichiers .rar depuis caminosantiago.org
-- [ ] Extraire les fichiers GPX de chaque .rar
-- [ ] Parser les GPX → extraire waypoints/trackpoints → localites
-- [ ] Peupler les tables : regions, localities, stages, route_localities
+### PRIORITE 1 — Localites + Etapes : FAIT (sessions 7+8)
+- [x] 43 seeders PHP du VPS1 parses (parse_seeders.py) → 778 loc, 742 stages
+- [x] GPX/KML import des 305 routes (import_gpx.py) → 1599 geocodees via Nominatim
+- [x] complete_stages.py pour les 265 routes manquantes → 1053 stages supplementaires
+- [x] Support KMZ + GPX ajoute pour les 3 derniers fichiers atypiques
+- [x] 305/305 routes ont des etapes (0 manquante)
+- [x] 2356 localites, 1795 etapes, 2830 route_localities
 - [ ] Cross-reference avec nco.ign.es pour les etapes espagnoles
-- Estimation : ~5000-10000 localites a extraire
+- [ ] Peupler la table regions
 
 ### PRIORITE 2 — Implementer le code des 8 skills
 - [ ] 01-scrape-google : Google Places API (NEED API KEY)

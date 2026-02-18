@@ -44,7 +44,7 @@ cat > "$N8N_DIR/01-planificateur.json" << 'EOF'
           "session_id": "planificateur-{{ $now.format('yyyy-MM-dd-HH') }}"
         },
         "headers": {
-          "Authorization": "Bearer cblrs-openclaw-bunker-2026",
+          "Authorization": "Bearer ${OPENCLAW_TOKEN}",
           "Content-Type": "application/json"
         }
       }

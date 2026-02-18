@@ -26,4 +26,13 @@ npm-debug.log*
 *.log
 
 # Temporary files
-temp-ssh.ps1
+temp-*
+*.ps1
+
+# SSH keys
+Cblrs-Kraps-2026/
+*.pem
+*.key
+
+# Claude
+.claude/

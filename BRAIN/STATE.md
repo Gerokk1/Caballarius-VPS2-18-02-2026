@@ -1,30 +1,124 @@
 # ETAT ACTUEL DU PROJET — VPS2
 
-**Derniere mise a jour : 2026-02-18 14:40**
+**Derniere mise a jour : 2026-02-18 18:10**
 
 ## Resume
-Configuration du VPS2 (cblrs.net) en cours. Serveur accessible en SSH. Disque 250 Go deja monte par l'hebergeur sur /mnt/data. BRAIN cree.
+VPS2 (cblrs.net) PLEINEMENT OPERATIONNEL. HTTPS actif. OpenClaw bunker mode + securite audit 25/25. BDD staging 14 tables, 38 pays, 305 routes, langues dynamiques. 8 skills custom (squelettes). 4 workflows n8n (squelettes JSON). Backup BDD : /data/backups/staging_2026-02-18.sql
 
-## Ce qui est fait
-- Repo GitHub cree : Gerokk1/Caballarius-VPS2-18-02-2026 (vide, a initialiser)
-- Connexion SSH validee (ubuntu@83.228.211.132:22 avec private-key-kraps.txt)
-- Disque 250 Go detecte (/dev/sdb monte sur /mnt/data, 233 Go libres)
-- Structure BRAIN creee avec toutes les regles
+## Ce qui fonctionne
+- [x] https://cblrs.net → 200 (SSL, redirect HTTP→HTTPS)
+- [x] https://www.cblrs.net → 200 (SSL)
+- [x] https://n8n.cblrs.net → 200 (SSL, reverse proxy vers Docker n8n)
+- [x] http://test.cblrs.net → 200 (wildcard vhost fonctionne)
+- [x] SSH ubuntu@83.228.211.132:22
+- [x] Disque 250 Go monte (/data, 233 Go libres)
+- [x] Securite : UFW, Fail2Ban, SSH durci, unattended upgrades
+- [x] Stack : Nginx 1.24, PHP 8.3, MariaDB 10.11, Redis, Node.js 20, Docker 29, Certbot 2.9
+- [x] n8n Docker UP
+- [x] Structure /data (sites/, templates/, n8n/, backups/)
+- [x] Repo GitHub (Gerokk1/Caballarius-VPS2-18-02-2026)
+- [x] Ports 80/443/5678 ouverts (Infomaniak Security Group)
+- [x] DNS *.cblrs.net → 83.228.211.132
 
-## Ce qui est en cours
-- Etape 2 : Finaliser le montage disque (symlink /data, verifier fstab)
+## OpenClaw (Bunker Mode)
+- [x] Container openclaw-bunker UP (alpine/openclaw:latest v2026.2.17)
+- [x] Gateway ecoute ws://0.0.0.0:18789
+- [x] Port 127.0.0.1:18789 uniquement (localhost, PAS expose)
+- [x] Reseau Docker isole (openclaw-isolated, separe de n8n)
+- [x] Auth token requis (401 sans token)
+- [x] Modele principal : openrouter/moonshotai/kimi-k2.5
+- [x] Config : /data/openclaw/config/openclaw.json
+- [x] Workspace : /data/openclaw/workspace
+- [x] API key OpenRouter configuree et testee (Kimi K2.5 repond)
+- [ ] API key Google AI Studio (Gemini 2.5 Flash) — placeholder
+- [x] Anti-prompt injection (HEARTBEAT.md)
+- [x] Exec security (tools.exec.security=allowlist)
+- [x] Audit securite 25/25 (cap_drop ALL, no-new-privileges, chmod 600)
 
-## Ce qui reste
-- Etapes 3 a 9 (securisation, stack, nginx wildcard, n8n, sites pros, repo, verifications)
+## BDD Staging (MariaDB caballarius_staging)
+### Schema : 14 tables
+countries, regions, routes, stages, localities, route_localities, establishments, establishment_photos, establishment_content, establishment_prices, establishment_sources, pro_sites, scrape_jobs, quality_checks
 
-## Etat du serveur
-- OS : Ubuntu, kernel 6.8.0-71-generic
-- Rien installe encore (serveur vierge)
-- Disque data monte mais pas de symlink /data
-- Pas de firewall configure
-- Pas de stack installee
+### Donnees actuelles
+| Table | Rows | Notes |
+|-------|------|-------|
+| countries | 38 | Toute l'Europe, colonne languages JSON, priorites 1-38 |
+| routes | 305 | 17 pays, slug=code, total_km, gpx_file URL .rar |
+| regions | 0 | A peupler (extraire des GPX) |
+| localities | 0 | A peupler (extraire des GPX) |
+| stages | 0 | A peupler |
+| establishments | 0 | A scraper (objectif 20-25K) |
+| Autres tables | 0 | Se rempliront au fil du pipeline |
 
-## Points d'attention
-- Bash ne fonctionne pas en local -> utiliser PowerShell
-- Le repo GitHub contient le code du VPS1 clone par erreur -> a vider et reinitialiser
-- Le dossier CONFIG ne doit PAS etre commite (credentials)
+### Modifications recentes
+- establishment_content.lang = VARCHAR(5) (etait ENUM, supporte toutes langues ISO 639-1)
+- countries.languages = JSON (langues officielles par pays, ex: CH=["de","fr","it","rm"])
+
+### Users BDD
+- cblrs_user : full privileges (voir CREDENTIALS/)
+- staging_user : SELECT/INSERT/UPDATE (voir CREDENTIALS/)
+
+### Sources de donnees
+- caminosantiago.org = SOURCE MASTER (305 routes, toute l'Europe, fichiers GPX .rar)
+- nco.ign.es = SOURCE VALIDATION (Espagne uniquement, IGN officiel)
+
+### Backup
+- /data/backups/staging_2026-02-18.sql (83 Ko)
+
+## Skills OpenClaw (8 custom)
+- [x] 8 skills dans /data/openclaw/workspace/skills/ (16 fichiers)
+- Statut : SQUELETTES (fonctions vides avec TODO)
+- 01-scrape-google : Google Places API, 17 categories, rayon 1km
+- 02-scrape-facebook : Pages FB, photos, avis
+- 03-scrape-instagram : Photos geolocalisees, hashtags camino
+- 04-scrape-tourisme : Offices tourisme, Wikipedia, patrimoine
+- 05-scrape-forums : Gronze, CaminoWays, Reddit, avis pelerins
+- 06-enrichir-contenu : Kimi K2.5, langues DYNAMIQUES (locales+fr+en), 3 profils
+- 07-generer-site : Template caballarius-v1, deploy /data/sites/
+- 08-sync-vps1 : API push vers caballarius.eu, HTTPS, retries
+- Doc : BRAIN/CLAW/skills.md
+
+## N8N Workflows (4 superviseur)
+- [x] 4 fichiers JSON dans /data/n8n/workflows/
+- 01-planificateur : Cron 4h, 20 localites pending → OpenClaw
+- 02-controle-qualite : Cron 2h, anomalies + Kimi K2.5 → quality_checks
+- 03-rapport-quotidien : Cron 20h, stats → Kimi rapport → Telegram
+- 04-watchdog : Cron 30min, check infra → auto-fix → alertes Telegram
+- Statut : SQUELETTES JSON (pas encore importes dans n8n)
+- Doc : BRAIN/N8N/workflows.md
+
+## Certificats SSL
+- cblrs.net + www.cblrs.net : valide jusqu'au 2026-05-19 (auto-renouvellement)
+- n8n.cblrs.net : valide jusqu'au 2026-05-19 (auto-renouvellement)
+- *.cblrs.net (wildcard) : PAS ENCORE — sites pros servis en HTTP
+
+## ============================================================
+## CE QUI RESTE A FAIRE (prochaines sessions)
+## ============================================================
+
+### PRIORITE 1 — Extraire localites depuis GPX (prochaine session)
+- [ ] Telecharger les 305 fichiers .rar depuis caminosantiago.org
+- [ ] Extraire les fichiers GPX de chaque .rar
+- [ ] Parser les GPX → extraire waypoints/trackpoints → localites
+- [ ] Peupler les tables : regions, localities, stages, route_localities
+- [ ] Cross-reference avec nco.ign.es pour les etapes espagnoles
+- Estimation : ~5000-10000 localites a extraire
+
+### PRIORITE 2 — Implementer le code des 8 skills
+- [ ] 01-scrape-google : Google Places API (NEED API KEY)
+- [ ] 02-scrape-facebook : Graph API ou browser scraping
+- [ ] 03-scrape-instagram : Browser tool, geoloc + hashtags
+- [ ] 04-scrape-tourisme : Fetch + parse offices tourisme
+- [ ] 05-scrape-forums : Gronze, Reddit, rate limit 1/3s
+- [ ] 06-enrichir-contenu : Kimi K2.5, langues dynamiques (structure prete)
+- [ ] 07-generer-site : Template HTML caballarius-v1
+- [ ] 08-sync-vps1 : API push avec retries
+
+### PRIORITE 3 — Infrastructure
+- [ ] Importer les 4 workflows dans n8n + configurer credentials
+- [ ] Creer API key Google AI Studio (Gemini 2.5 Flash fallback)
+- [ ] Creer API key Google Places
+- [ ] Configurer Telegram bot (rapports + alertes)
+- [ ] Wildcard SSL via acme.sh + API Infomaniak
+- [ ] Template HTML Caballarius v1 dans /data/templates/
+- [ ] Ajouter jails Fail2Ban Nginx

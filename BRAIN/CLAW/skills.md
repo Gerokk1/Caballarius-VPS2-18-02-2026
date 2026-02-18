@@ -7,17 +7,19 @@
 
 ---
 
-## 01-scrape-google
-**Fonction** : scrapeGooglePlaces(localityId, db)
-**But** : Scraper Google Places API pour une localite (rayon 1km)
-**Categories** : 17 types Google -> 32 categories Caballarius
-**Mapping** : lodging→hotel, restaurant→restaurant, bar→bar, cafe→cafe, pharmacy→pharmacie, hospital→hopital, supermarket→supermarche, atm→dab, tourist_attraction→monument, bakery→boulangerie, bank→banque, post_office→poste, laundry→laverie, bicycle_store→location_velo, taxi_stand→taxi, church→eglise, museum→musee
-**Entrees** : localityId
-**Sorties** : establishments, establishment_photos (max 10/lieu), establishment_sources
-**Deduplication** : via google_place_id (UNIQUE)
-**API** : Google Places Nearby Search + Place Details (rayon 1000m)
-**Cout** : tracking dans scrape_jobs.cost_usd
+## 01-scrape-sonar
+**Fonction** : node index.js (CLI)
+**But** : Scraper TOUS les etablissements d'une localite via Perplexity Sonar Pro
+**API** : perplexity/sonar-pro via OpenRouter (cle deja configuree)
+**Categories** : 32 categories Caballarius (mapping fuzzy FR/ES/EN)
+**Entrees** : localityId (ou batch de pending)
+**Sorties** : establishments, establishment_sources (source_type=sonar_pro), scrape_jobs
+**Methode** : 1 requete Sonar Pro par localite, reponse JSON structuree
+**Rate limit** : 2s entre requetes, 3 retries backoff exponentiel
+**Cout** : ~$3/1000 requetes, ~$7 pour les 2356 localites
 **Status** : localities.scrape_status -> 'in_progress' -> 'done'
+**Migration** : sql/04-add-sonar-source.sql (ENUM sonar_pro)
+**Usage** : `node index.js --batch 20`, `--dry-run`, `--locality-id 42`, `--limit 100`
 
 ---
 

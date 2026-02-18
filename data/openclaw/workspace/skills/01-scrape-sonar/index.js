@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
- * SKILL 01-scrape-sonar — Scraping établissements via Kimi K2.5
+ * SKILL 01-scrape-sonar — Scraping établissements via Perplexity Sonar
  *
- * Utilise moonshotai/kimi-k2.5 via OpenRouter (GRATUIT) pour lister
+ * Utilise perplexity/sonar via OpenRouter (recherche web réelle) pour lister
  * les établissements de chaque localité du Camino de Santiago.
+ * Coût : $1/M input + $1/M output + $5/1K requêtes ≈ $0.001/localité.
  *
  * Usage:
  *   node index.js --batch 20
@@ -25,7 +26,7 @@ const DB_CONFIG = {
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'moonshotai/kimi-k2.5';
+const MODEL = 'perplexity/sonar';
 
 const RATE_LIMIT_MS = 2000;
 const MAX_RETRIES = 3;
@@ -165,7 +166,7 @@ function parseArgs() {
   return opts;
 }
 
-// ─── OpenRouter / Kimi K2.5 ─────────────────────────────────────────────────
+// ─── OpenRouter / Perplexity Sonar ───────────────────────────────────────────
 
 function buildPrompt(localityName, routeName) {
   return `Recherche TOUS les établissements utiles aux pèlerins à "${localityName}" sur le chemin "${routeName}" (Camino de Santiago).
@@ -357,7 +358,7 @@ async function processLocality(db, locality, dryRun) {
   // 1. Marquer in_progress
   if (!dryRun) await setLocalityStatus(db, id, 'in_progress');
 
-  // 2. Appeler Kimi K2.5
+  // 2. Appeler Perplexity Sonar
   const prompt = buildPrompt(name, routeName);
   let result;
   try {
@@ -384,12 +385,12 @@ async function processLocality(db, locality, dryRun) {
   }
 
   const establishments = parsed.establishments;
-  console.log(`  Kimi K2.5 → ${establishments.length} établissements trouvés`);
+  console.log(`  Sonar → ${establishments.length} établissements trouvés`);
 
   // 4. Coût estimé
   const tokensIn = result.usage.prompt_tokens || 0;
   const tokensOut = result.usage.completion_tokens || 0;
-  const costUsd = 0; // Kimi K2.5 = GRATUIT sur OpenRouter
+  const costUsd = (tokensIn / 1e6) * 1 + (tokensOut / 1e6) * 1 + 0.005; // Sonar: $1/M in + $1/M out + $5/1K req
 
   if (dryRun) {
     let mapped = 0;
@@ -438,7 +439,7 @@ async function main() {
   }
 
   console.log('='.repeat(60));
-  console.log('SKILL 01 — Scrape Kimi K2.5');
+  console.log('SKILL 01 — Scrape Perplexity Sonar');
   console.log(`Modèle: ${MODEL}`);
   console.log(`Batch: ${opts.batch} | Dry run: ${opts.dryRun} | Locality: ${opts.localityId || 'auto'} | Limit: ${opts.limit || 'none'}`);
   console.log('='.repeat(60));

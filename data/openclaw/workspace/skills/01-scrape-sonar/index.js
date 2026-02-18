@@ -303,34 +303,28 @@ async function insertEstablishment(db, localityId, lat, lng, est) {
          price_level, opening_hours, scrape_status)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scraped')
       ON DUPLICATE KEY UPDATE
+        slug = VALUES(slug),
+        category = VALUES(category),
+        address = COALESCE(VALUES(address), address),
         phone = COALESCE(VALUES(phone), phone),
         email = COALESCE(VALUES(email), email),
         website = COALESCE(VALUES(website), website),
         google_rating = COALESCE(VALUES(google_rating), google_rating),
         google_reviews_count = GREATEST(VALUES(google_reviews_count), google_reviews_count),
-        updated_at = NOW()
+        price_level = COALESCE(VALUES(price_level), price_level),
+        opening_hours = COALESCE(VALUES(opening_hours), opening_hours),
+        updated_at = NOW(),
+        id = LAST_INSERT_ID(id)
     `, [localityId, name, slug, category, address, lat, lng,
         phone, email, website, rating, reviewsCount, priceLevel, hours]);
 
+    // insertId = new row ID or existing row ID (via LAST_INSERT_ID trick)
     return result.insertId || null;
   } catch (err) {
+    // Vrai doublon (même nom + même localité) = SKIP, pas de fallback
     if (err.code === 'ER_DUP_ENTRY') {
-      // Slug collision — ajouter un suffixe
-      const slug2 = slug + '-' + Date.now().toString(36).slice(-4);
-      try {
-        const [result] = await db.query(`
-          INSERT INTO establishments
-            (locality_id, name, slug, category, address, lat, lng,
-             phone, email, website, google_rating, google_reviews_count,
-             price_level, opening_hours, scrape_status)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scraped')
-        `, [localityId, name, slug2, category, address, lat, lng,
-            phone, email, website, rating, reviewsCount, priceLevel, hours]);
-        return result.insertId;
-      } catch (err2) {
-        console.log(`    [SKIP] Doublon: ${name} (${err2.code})`);
-        return null;
-      }
+      console.log(`    [SKIP] Doublon: ${name}`);
+      return null;
     }
     console.log(`    [ERR] Insert ${name}: ${err.message}`);
     return null;

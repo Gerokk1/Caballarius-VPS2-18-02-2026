@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * SKILL 01-scrape-sonar — Scraping établissements via Perplexity Sonar
+ * SKILL 01-scrape-sonar — Brave Search + Kimi K2.5
  *
- * Utilise perplexity/sonar via OpenRouter (recherche web réelle) pour lister
- * les établissements de chaque localité du Camino de Santiago.
- * 2 passes par localité : hébergement+resto puis services.
- * Coût : ~$0.002/localité × 2356 = ~$5.
+ * Architecture :
+ *   1. Brave Search API (gratuit, 2000 req/mois) → résultats web bruts
+ *   2. Kimi K2.5 via OpenRouter (gratuit) → extraction JSON structuré
+ *
+ * 2 recherches Brave + 1 appel Kimi par localité = 3 appels, $0.
+ * 2000 req Brave/mois = ~666 localités/mois (3 mois pour 2356).
  *
  * Usage:
  *   node index.js --batch 20
@@ -27,9 +29,13 @@ const DB_CONFIG = {
 
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'perplexity/sonar';
+const MODEL = 'moonshotai/kimi-k2.5';
 
-const RATE_LIMIT_MS = 2000;
+const BRAVE_API_KEY = process.env.BRAVE_API_KEY || '';
+const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';
+
+const BRAVE_RATE_MS = 1100;  // Brave free = 1 req/sec
+const KIMI_RATE_MS = 1000;
 const MAX_RETRIES = 3;
 const DEFAULT_BATCH = 20;
 
@@ -113,18 +119,14 @@ function mapCategory(raw) {
 }
 
 function extractJSON(text) {
-  // Enlever les blocs markdown ```json ... ```
   let cleaned = text.replace(/```json\s*/gi, '').replace(/```\s*/g, '');
 
-  // Chercher le premier { ... } valide
   const start = cleaned.indexOf('{');
   if (start === -1) return null;
 
   let end = cleaned.lastIndexOf('}');
   if (end === -1 || end <= start) {
-    // JSON tronqué — tenter de fermer proprement
     cleaned = cleaned.substring(start);
-    // Trouver le dernier objet complet dans le tableau
     const lastComplete = cleaned.lastIndexOf('}');
     if (lastComplete > 0) {
       cleaned = cleaned.substring(0, lastComplete + 1) + ']}';
@@ -135,13 +137,11 @@ function extractJSON(text) {
     cleaned = cleaned.substring(start, end + 1);
   }
 
-  // Fix trailing commas
   cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
 
   try {
     return JSON.parse(cleaned);
   } catch (e) {
-    // Dernier recours : trouver le dernier }, fermer le tableau
     const lastBrace = cleaned.lastIndexOf('}', cleaned.length - 2);
     if (lastBrace > 0) {
       const truncated = cleaned.substring(0, lastBrace + 1) + ']}';
@@ -168,57 +168,71 @@ function parseArgs() {
   return opts;
 }
 
-// ─── OpenRouter / Perplexity Sonar — 2 passes ───────────────────────────────
+// ─── Brave Search API ───────────────────────────────────────────────────────
 
-const JSON_FIELDS = `Pour CHAQUE établissement, donne :
-- name : nom exact
-- category : exactement un de la liste ci-dessus
-- address : adresse complète
-- phone : numéro de téléphone (ou null)
-- email : adresse email (ou null)
-- website : URL du site web (ou null)
+async function searchBrave(query, retryCount = 0) {
+  const url = `${BRAVE_SEARCH_URL}?q=${encodeURIComponent(query)}&count=10`;
+  const response = await fetch(url, {
+    headers: {
+      'Accept': 'application/json',
+      'Accept-Encoding': 'gzip',
+      'X-Subscription-Token': BRAVE_API_KEY,
+    },
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    if (retryCount < MAX_RETRIES && (response.status === 429 || response.status >= 500)) {
+      const delay = BRAVE_RATE_MS * Math.pow(2, retryCount);
+      console.log(`  [BRAVE RETRY ${retryCount + 1}/${MAX_RETRIES}] ${response.status} — ${delay}ms`);
+      await sleep(delay);
+      return searchBrave(query, retryCount + 1);
+    }
+    throw new Error(`Brave ${response.status}: ${errBody.substring(0, 200)}`);
+  }
+
+  const data = await response.json();
+  const results = (data.web?.results || []).slice(0, 10);
+
+  return results.map(r => ({
+    title: r.title || '',
+    url: r.url || '',
+    description: r.description || '',
+  }));
+}
+
+// ─── Kimi K2.5 via OpenRouter ───────────────────────────────────────────────
+
+function buildKimiPrompt(localityName, routeName, searchResults) {
+  const resultsText = searchResults.map((r, i) =>
+    `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.description}`
+  ).join('\n\n');
+
+  return `Voici des résultats de recherche web pour les établissements à "${localityName}" sur le ${routeName} (Camino de Santiago).
+
+RÉSULTATS DE RECHERCHE :
+${resultsText}
+
+À partir de ces résultats, extrais TOUS les établissements mentionnés.
+Pour chaque établissement, donne :
+- name : nom exact de l'établissement
+- category : exactement un de [albergue, hotel, gite, pension, camping, restaurant, bar, cafe, boulangerie, epicerie, supermarche, pharmacie, medecin, hopital, podologue, fontaine, laverie, banque, dab, poste, office_tourisme, location_velo, transport_bagages, taxi, eglise, cathedrale, monastere, musee, monument, point_de_vue]
+- address : adresse (ou null)
+- phone : téléphone (ou null)
+- email : email (ou null)
+- website : URL (ou null)
 - opening_hours : horaires (ou null)
-- google_rating : note Google /5 (nombre ou null)
-- google_reviews_count : nombre d'avis (nombre ou 0)
-- price_level : 1 (bon marché) à 4 (luxe) (ou null)
-- services : liste de services (tableau de strings, ou [])
+- google_rating : note /5 (ou null)
+- google_reviews_count : nombre d'avis (ou 0)
+- price_level : 1 à 4 (ou null)
+- services : tableau de strings (ou [])
 
 Réponds UNIQUEMENT avec du JSON valide :
 {"establishments": [...]}
-Si tu ne trouves rien : {"establishments": []}`;
-
-function buildPromptPass1(localityName, routeName) {
-  return `Liste TOUS les hébergements et restaurants pour pèlerins à "${localityName}" sur le "${routeName}" (Camino de Santiago).
-
-Cherche spécifiquement :
-- Hébergements : albergue, hotel, gite, pension, camping (auberges de pèlerins, refuges, hostels, chambres d'hôtes, casa rural)
-- Restaurants et alimentation : restaurant, bar, cafe, boulangerie, epicerie, supermarche
-
-Sois exhaustif — liste TOUS les établissements existants, même les petits.
-
-${JSON_FIELDS}`;
+Si aucun établissement trouvé : {"establishments": []}`;
 }
 
-function buildPromptPass2(localityName, routeName) {
-  return `Quels sont les services, commerces et lieux d'intérêt à "${localityName}" (${routeName}, Camino de Santiago) ?
-
-Je cherche les noms et adresses exacts de :
-- Pharmacies et centres médicaux (pharmacie, médecin, hôpital, centro de salud)
-- Supermarchés et épiceries (supermarché, tienda, minimarket)
-- Banques et distributeurs automatiques (banco, cajero, ATM)
-- Bureau de poste (correos)
-- Laveries automatiques (lavandería, laverie)
-- Office de tourisme
-- Taxi et transport de bagages
-- Églises, cathédrales et monastères
-- Musées, monuments et points de vue remarquables
-
-Liste chaque établissement avec son nom réel et son adresse exacte.
-
-${JSON_FIELDS}`;
-}
-
-async function callSonarPro(prompt, retryCount = 0) {
+async function callKimi(prompt, retryCount = 0) {
   const response = await fetch(OPENROUTER_URL, {
     method: 'POST',
     headers: {
@@ -232,7 +246,7 @@ async function callSonarPro(prompt, retryCount = 0) {
       messages: [
         {
           role: 'system',
-          content: 'Tu es un assistant spécialisé dans les chemins de Compostelle. Tu retournes UNIQUEMENT du JSON valide, sans markdown, sans commentaire, sans texte additionnel.'
+          content: 'Tu es un extracteur de données. Tu analyses des résultats de recherche web et tu extrais les établissements mentionnés en JSON structuré. UNIQUEMENT du JSON, sans markdown, sans commentaire.'
         },
         { role: 'user', content: prompt }
       ],
@@ -244,19 +258,17 @@ async function callSonarPro(prompt, retryCount = 0) {
   if (!response.ok) {
     const errBody = await response.text();
     if (retryCount < MAX_RETRIES && (response.status === 429 || response.status >= 500)) {
-      const delay = RATE_LIMIT_MS * Math.pow(2, retryCount);
-      console.log(`  [RETRY ${retryCount + 1}/${MAX_RETRIES}] ${response.status} — attente ${delay}ms`);
+      const delay = KIMI_RATE_MS * Math.pow(2, retryCount);
+      console.log(`  [KIMI RETRY ${retryCount + 1}/${MAX_RETRIES}] ${response.status} — ${delay}ms`);
       await sleep(delay);
-      return callSonarPro(prompt, retryCount + 1);
+      return callKimi(prompt, retryCount + 1);
     }
     throw new Error(`OpenRouter ${response.status}: ${errBody.substring(0, 200)}`);
   }
 
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content || '';
-  const usage = data.usage || {};
-
-  return { content, usage };
+  return { content };
 }
 
 // ─── Database ───────────────────────────────────────────────────────────────
@@ -340,10 +352,8 @@ async function insertEstablishment(db, localityId, lat, lng, est) {
     `, [localityId, name, slug, category, address, lat, lng,
         phone, email, website, rating, reviewsCount, priceLevel, hours]);
 
-    // insertId = new row ID or existing row ID (via LAST_INSERT_ID trick)
     return result.insertId || null;
   } catch (err) {
-    // Vrai doublon (même nom + même localité) = SKIP, pas de fallback
     if (err.code === 'ER_DUP_ENTRY') {
       console.log(`    [SKIP] Doublon: ${name}`);
       return null;
@@ -370,85 +380,98 @@ async function logScrapeJob(db, localityId, status, count, costUsd, errorLog) {
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
-async function runPass(passLabel, prompt) {
-  let result;
-  try {
-    result = await callSonarPro(prompt);
-  } catch (err) {
-    console.log(`  [ERREUR API ${passLabel}] ${err.message}`);
-    return { establishments: [], tokensIn: 0, tokensOut: 0, error: err.message };
-  }
-
-  const parsed = extractJSON(result.content);
-  if (!parsed || !Array.isArray(parsed.establishments)) {
-    console.log(`  [ERREUR PARSE ${passLabel}] Réponse non-JSON (${result.content.length} chars):`);
-    console.log(`  ${result.content.substring(0, 300)}`);
-    return { establishments: [], tokensIn: 0, tokensOut: 0, error: 'parse_failed' };
-  }
-
-  const tokensIn = result.usage.prompt_tokens || 0;
-  const tokensOut = result.usage.completion_tokens || 0;
-  console.log(`  ${passLabel} → ${parsed.establishments.length} établissements (${tokensIn}+${tokensOut} tokens)`);
-  return { establishments: parsed.establishments, tokensIn, tokensOut, error: null };
-}
-
 async function processLocality(db, locality, dryRun) {
   const { id, name, lat, lng, route_names } = locality;
   const routeName = route_names || 'Camino de Santiago';
 
-  console.log(`\n[${id}] ${name} (${lat}, ${lng}) — ${routeName}`);
+  console.log(`\n[${id}] ${name} (${lat}, ${lng}) -- ${routeName}`);
 
   // 1. Marquer in_progress
   if (!dryRun) await setLocalityStatus(db, id, 'in_progress');
 
-  // 2. PASSE 1 — Hébergement + restauration
-  const prompt1 = buildPromptPass1(name, routeName);
-  const pass1 = await runPass('PASS1-hebergement', prompt1);
-
-  await sleep(RATE_LIMIT_MS);
-
-  // 3. PASSE 2 — Services + patrimoine
-  const prompt2 = buildPromptPass2(name, routeName);
-  const pass2 = await runPass('PASS2-services', prompt2);
-
-  // 4. Erreur totale ?
-  if (pass1.error && pass2.error) {
-    if (!dryRun) {
-      await setLocalityStatus(db, id, 'error');
-      await logScrapeJob(db, id, 'error', 0, 0, `${pass1.error}; ${pass2.error}`);
-    }
-    return { inserted: 0, skipped: 0, error: `${pass1.error}; ${pass2.error}` };
+  // 2. Brave Search #1 : hebergement + restauration
+  const query1 = `hebergement albergue hotel restaurant "${name}" Camino de Santiago`;
+  console.log(`  BRAVE #1: ${query1}`);
+  let results1 = [];
+  try {
+    results1 = await searchBrave(query1);
+    console.log(`  -> ${results1.length} resultats web`);
+  } catch (err) {
+    console.log(`  [ERREUR BRAVE #1] ${err.message}`);
   }
 
-  // 5. Fusionner les résultats des 2 passes
-  const allEstablishments = [...pass1.establishments, ...pass2.establishments];
-  const totalTokensIn = pass1.tokensIn + pass2.tokensIn;
-  const totalTokensOut = pass1.tokensOut + pass2.tokensOut;
-  const costUsd = (totalTokensIn / 1e6) * 1 + (totalTokensOut / 1e6) * 1 + 0.01; // 2 requêtes × $5/1K
+  await sleep(BRAVE_RATE_MS);
 
-  console.log(`  TOTAL: ${allEstablishments.length} établissements, ~$${costUsd.toFixed(4)}`);
+  // 3. Brave Search #2 : services
+  const query2 = `pharmacie banque office tourisme eglise "${name}" services`;
+  console.log(`  BRAVE #2: ${query2}`);
+  let results2 = [];
+  try {
+    results2 = await searchBrave(query2);
+    console.log(`  -> ${results2.length} resultats web`);
+  } catch (err) {
+    console.log(`  [ERREUR BRAVE #2] ${err.message}`);
+  }
+
+  // 4. Combiner les resultats
+  const allResults = [...results1, ...results2];
+  if (allResults.length === 0) {
+    console.log(`  [AUCUN RESULTAT] Brave n'a rien trouve`);
+    if (!dryRun) {
+      await setLocalityStatus(db, id, 'error');
+      await logScrapeJob(db, id, 'error', 0, 0, 'No Brave results');
+    }
+    return { inserted: 0, skipped: 0, error: 'no_brave_results' };
+  }
+
+  console.log(`  ${allResults.length} resultats web combines -> Kimi K2.5...`);
+
+  await sleep(KIMI_RATE_MS);
+
+  // 5. Kimi K2.5 extrait les etablissements
+  const kimiPrompt = buildKimiPrompt(name, routeName, allResults);
+  let kimiResult;
+  try {
+    kimiResult = await callKimi(kimiPrompt);
+  } catch (err) {
+    console.log(`  [ERREUR KIMI] ${err.message}`);
+    if (!dryRun) {
+      await setLocalityStatus(db, id, 'error');
+      await logScrapeJob(db, id, 'error', 0, 0, err.message);
+    }
+    return { inserted: 0, skipped: 0, error: err.message };
+  }
+
+  // 6. Parser la reponse JSON
+  const parsed = extractJSON(kimiResult.content);
+  if (!parsed || !Array.isArray(parsed.establishments)) {
+    console.log(`  [ERREUR PARSE] Reponse non-JSON (${kimiResult.content.length} chars):`);
+    console.log(`  ${kimiResult.content.substring(0, 300)}`);
+    if (!dryRun) {
+      await setLocalityStatus(db, id, 'error');
+      await logScrapeJob(db, id, 'error', 0, 0, 'JSON parse failed');
+    }
+    return { inserted: 0, skipped: 0, error: 'parse_failed' };
+  }
+
+  const establishments = parsed.establishments;
+  console.log(`  Kimi -> ${establishments.length} etablissements extraits`);
 
   if (dryRun) {
     let mapped = 0;
-    const seen = new Set();
-    for (const est of allEstablishments) {
+    for (const est of establishments) {
       const cat = mapCategory(est.category);
-      const nameKey = (est.name || '').trim().toLowerCase();
-      const isDupe = seen.has(nameKey);
-      seen.add(nameKey);
-      const label = cat
-        ? (isDupe ? `~ ${cat} (doublon inter-pass)` : `✓ ${cat}`)
-        : `✗ "${est.category}"`;
-      console.log(`    ${label} — ${est.name}`);
-      if (cat && !isDupe) mapped++;
+      const label = cat ? `+ ${cat}` : `x "${est.category}"`;
+      console.log(`    ${label} -- ${est.name}`);
+      if (cat) mapped++;
     }
-    console.log(`  [DRY RUN] ${mapped} uniques catégorisés / ${allEstablishments.length} bruts, ~$${costUsd.toFixed(4)}`);
-    return { inserted: mapped, skipped: allEstablishments.length - mapped, error: null };
+    console.log(`  [DRY RUN] ${mapped}/${establishments.length} categorises, $0`);
+    return { inserted: mapped, skipped: establishments.length - mapped, error: null };
   }
 
-  // 6. Insérer en BDD (ON DUPLICATE KEY UPDATE gère les doublons inter-pass)
+  // 7. Inserer en BDD
   let inserted = 0, skipped = 0;
-  for (const est of allEstablishments) {
+  for (const est of establishments) {
     const estId = await insertEstablishment(db, id, lat, lng, est);
     if (estId) {
       await insertSource(db, estId, est);
@@ -459,11 +482,11 @@ async function processLocality(db, locality, dryRun) {
     }
   }
 
-  // 7. Mettre à jour le statut
+  // 8. Mettre a jour le statut
   await setLocalityStatus(db, id, 'done');
-  await logScrapeJob(db, id, 'done', inserted, costUsd, null);
+  await logScrapeJob(db, id, 'done', inserted, 0, null);
 
-  console.log(`  → ${inserted} insérés, ${skipped} ignorés, ~$${costUsd.toFixed(4)}`);
+  console.log(`  -> ${inserted} inseres, ${skipped} ignores, $0`);
   return { inserted, skipped, error: null };
 }
 
@@ -472,27 +495,34 @@ async function main() {
 
   // Validations
   if (!DB_CONFIG.password) {
-    console.error('ERREUR: DB_PASS non défini. Utiliser: export DB_PASS="..."');
+    console.error('ERREUR: DB_PASS non defini. export DB_PASS="..."');
     process.exit(1);
   }
   if (!OPENROUTER_API_KEY) {
-    console.error('ERREUR: OPENROUTER_API_KEY non défini. Utiliser: export OPENROUTER_API_KEY="sk-or-..."');
+    console.error('ERREUR: OPENROUTER_API_KEY non defini. export OPENROUTER_API_KEY="sk-or-..."');
+    process.exit(1);
+  }
+  if (!BRAVE_API_KEY) {
+    console.error('ERREUR: BRAVE_API_KEY non defini. export BRAVE_API_KEY="BSA..."');
+    console.error('Cree une cle gratuite : https://api.search.brave.com/app/keys');
     process.exit(1);
   }
 
   console.log('='.repeat(60));
-  console.log('SKILL 01 — Scrape Perplexity Sonar (2 passes)');
-  console.log(`Modèle: ${MODEL} | 2 requêtes/localité`);
+  console.log('SKILL 01 -- Brave Search + Kimi K2.5');
+  console.log(`Brave: 2 recherches/localite | Kimi: ${MODEL}`);
   console.log(`Batch: ${opts.batch} | Dry run: ${opts.dryRun} | Locality: ${opts.localityId || 'auto'} | Limit: ${opts.limit || 'none'}`);
+  console.log('Cout: $0 (Brave free + Kimi free)');
   console.log('='.repeat(60));
 
   const db = await mysql.createConnection(DB_CONFIG);
 
   try {
     const pending = await countPending(db);
-    console.log(`Localités pending: ${pending}`);
+    console.log(`Localites pending: ${pending}`);
 
     let totalInserted = 0, totalSkipped = 0, totalErrors = 0;
+    let braveQueries = 0;
     let processed = 0;
 
     while (true) {
@@ -504,7 +534,7 @@ async function main() {
 
       const batch = await getNextBatch(db, batchSize, opts.localityId);
       if (batch.length === 0) {
-        console.log('\nAucune localité pending restante.');
+        console.log('\nAucune localite pending restante.');
         break;
       }
 
@@ -513,25 +543,26 @@ async function main() {
         totalInserted += result.inserted;
         totalSkipped += result.skipped;
         if (result.error) totalErrors++;
+        braveQueries += 2;
         processed++;
 
         if (opts.limit && processed >= opts.limit) break;
 
-        // Rate limit entre les requêtes
-        await sleep(RATE_LIMIT_MS);
+        await sleep(BRAVE_RATE_MS);
       }
 
-      // Si locality-id spécifique, ne boucler qu'une fois
       if (opts.localityId) break;
       if (opts.limit && processed >= opts.limit) break;
     }
 
     console.log('\n' + '='.repeat(60));
-    console.log('RÉSULTAT FINAL');
-    console.log(`  Localités traitées: ${processed}`);
-    console.log(`  Établissements insérés: ${totalInserted}`);
-    console.log(`  Établissements ignorés: ${totalSkipped}`);
+    console.log('RESULTAT FINAL');
+    console.log(`  Localites traitees: ${processed}`);
+    console.log(`  Etablissements inseres: ${totalInserted}`);
+    console.log(`  Etablissements ignores: ${totalSkipped}`);
     console.log(`  Erreurs: ${totalErrors}`);
+    console.log(`  Requetes Brave utilisees: ${braveQueries}/2000`);
+    console.log(`  Cout total: $0`);
     console.log('='.repeat(60));
 
   } finally {

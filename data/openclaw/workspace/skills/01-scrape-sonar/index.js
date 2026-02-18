@@ -49,7 +49,7 @@ const CATEGORY_ALIASES = {
   'accommodation': 'albergue', 'hébergement': 'albergue', 'lodging': 'albergue',
   'auberge': 'albergue', 'hostel': 'albergue', 'refugio': 'albergue', 'refuge': 'albergue', 'albergue': 'albergue',
   'hotel': 'hotel', 'hôtel': 'hotel', 'hostal': 'hotel',
-  'gîte': 'gite', 'gite': 'gite', "chambre d'hôte": 'gite', "chambre d'hotes": 'gite', 'casa rural': 'gite',
+  'gîte': 'gite', 'gite': 'gite', "chambre d'hôte": 'gite', "chambre d'hotes": 'gite', "chambres d'hotes": 'gite', "chambres d'hôtes": 'gite', 'casa rural': 'gite',
   'pension': 'pension', 'pensión': 'pension', 'b&b': 'pension', 'bed and breakfast': 'pension',
   'camping': 'camping',
   'restaurant': 'restaurant', 'restaurante': 'restaurant',
@@ -103,9 +103,10 @@ function mapCategory(raw) {
   // Direct match dans VALID_CATEGORIES
   if (VALID_CATEGORIES.has(normalized)) return normalized;
 
-  // Match via aliases (substring)
+  // Match via aliases (substring, both sides normalized)
   for (const [alias, cat] of Object.entries(CATEGORY_ALIASES)) {
-    if (normalized.includes(alias) || alias.includes(normalized)) return cat;
+    const normAlias = alias.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    if (normalized.includes(normAlias) || normAlias.includes(normalized)) return cat;
   }
 
   return null;
@@ -199,14 +200,20 @@ ${JSON_FIELDS}`;
 }
 
 function buildPromptPass2(localityName, routeName) {
-  return `Liste TOUS les services et points d'intérêt utiles aux pèlerins à "${localityName}" sur le "${routeName}" (Camino de Santiago).
+  return `Quels sont les services, commerces et lieux d'intérêt à "${localityName}" (${routeName}, Camino de Santiago) ?
 
-Cherche spécifiquement :
-- Santé : pharmacie, medecin, hopital, podologue
-- Services pratiques : fontaine, laverie, banque, dab, poste, office_tourisme, location_velo, transport_bagages, taxi
-- Patrimoine et culture : eglise, cathedrale, monastere, musee, monument, point_de_vue
+Je cherche les noms et adresses exacts de :
+- Pharmacies et centres médicaux (pharmacie, médecin, hôpital, centro de salud)
+- Supermarchés et épiceries (supermarché, tienda, minimarket)
+- Banques et distributeurs automatiques (banco, cajero, ATM)
+- Bureau de poste (correos)
+- Laveries automatiques (lavandería, laverie)
+- Office de tourisme
+- Taxi et transport de bagages
+- Églises, cathédrales et monastères
+- Musées, monuments et points de vue remarquables
 
-Sois exhaustif — liste TOUS les services existants, même les petits.
+Liste chaque établissement avec son nom réel et son adresse exacte.
 
 ${JSON_FIELDS}`;
 }

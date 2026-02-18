@@ -115,21 +115,38 @@ function extractJSON(text) {
 
   // Chercher le premier { ... } valide
   const start = cleaned.indexOf('{');
-  const end = cleaned.lastIndexOf('}');
-  if (start === -1 || end === -1) return null;
+  if (start === -1) return null;
 
-  cleaned = cleaned.substring(start, end + 1);
+  let end = cleaned.lastIndexOf('}');
+  if (end === -1 || end <= start) {
+    // JSON tronqué — tenter de fermer proprement
+    cleaned = cleaned.substring(start);
+    // Trouver le dernier objet complet dans le tableau
+    const lastComplete = cleaned.lastIndexOf('}');
+    if (lastComplete > 0) {
+      cleaned = cleaned.substring(0, lastComplete + 1) + ']}';
+    } else {
+      return null;
+    }
+  } else {
+    cleaned = cleaned.substring(start, end + 1);
+  }
+
+  // Fix trailing commas
+  cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
 
   try {
     return JSON.parse(cleaned);
   } catch (e) {
-    // Tenter de corriger les trailing commas
-    cleaned = cleaned.replace(/,\s*([}\]])/g, '$1');
-    try {
-      return JSON.parse(cleaned);
-    } catch (e2) {
-      return null;
+    // Dernier recours : trouver le dernier }, fermer le tableau
+    const lastBrace = cleaned.lastIndexOf('}', cleaned.length - 2);
+    if (lastBrace > 0) {
+      const truncated = cleaned.substring(0, lastBrace + 1) + ']}';
+      try {
+        return JSON.parse(truncated);
+      } catch (e2) { /* fallthrough */ }
     }
+    return null;
   }
 }
 
@@ -198,7 +215,7 @@ async function callSonarPro(prompt, retryCount = 0) {
         { role: 'user', content: prompt }
       ],
       temperature: 0.1,
-      max_tokens: 4096,
+      max_tokens: 16384,
     }),
   });
 

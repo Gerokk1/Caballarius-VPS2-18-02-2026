@@ -30,7 +30,11 @@ services:
       # Agent: Le Veilleur (monitoring)
       - VEILLEUR_DB_USER=veilleur_user
       - VEILLEUR_DB_PASS=Ve!lleur2026_Cblrs
-      # OpenRouter API
+      # AI Provider (google ou openrouter)
+      - AI_PROVIDER=google
+      # Google AI Studio (Gemini 2.5 Flash, gratuit)
+      - GOOGLE_API_KEY=AIzaSyAOtFdQS37QBqViWpWi1dPU-35N34r71Ss
+      # OpenRouter (fallback)
       - OPENROUTER_API_KEY=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
     networks:
       - openclaw-isolated

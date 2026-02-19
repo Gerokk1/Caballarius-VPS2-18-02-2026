@@ -24,11 +24,13 @@ const DB_CONFIG = {
   charset: 'utf8mb4',
 };
 
-// Phase 1: Kimi K2.5 (gratuit via OpenRouter) — scrape de memoire
-// Phase 2 (semaine prochaine): basculer sur Sonar Pro pour verifier
-const API_KEY = process.env.OPENROUTER_API_KEY || '';
-const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'moonshotai/kimi-k2.5';
+// AI Provider: google (Gemini 2.5 Flash, gratuit) ou openrouter (Kimi K2.5)
+const AI_PROVIDER = (process.env.AI_PROVIDER || 'google').toLowerCase();
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
+const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+const OPENROUTER_MODEL = 'moonshotai/kimi-k2.5';
+const GOOGLE_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GOOGLE_API_KEY}`;
 
 const RATE_LIMIT_MS = 1500;
 const MAX_RETRIES = 3;
@@ -211,16 +213,61 @@ ${JSON_FIELDS}`;
 }
 
 async function callLLM(prompt, retryCount = 0) {
-  const response = await fetch(API_URL, {
+  if (AI_PROVIDER === 'google') {
+    return callGoogle(prompt, retryCount);
+  }
+  return callOpenRouter(prompt, retryCount);
+}
+
+async function callGoogle(prompt, retryCount = 0) {
+  const response = await fetch(GOOGLE_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      systemInstruction: {
+        parts: [{ text: 'Tu es un assistant specialise dans les chemins de Compostelle. Tu retournes UNIQUEMENT du JSON valide, sans markdown, sans commentaire, sans texte additionnel.' }]
+      },
+      contents: [{ parts: [{ text: prompt }] }],
+      generationConfig: {
+        responseMimeType: 'application/json',
+        temperature: 0.1,
+        maxOutputTokens: 8000,
+      },
+    }),
+  });
+
+  if (!response.ok) {
+    const errBody = await response.text();
+    if (retryCount < MAX_RETRIES && (response.status === 429 || response.status >= 500)) {
+      const delay = RATE_LIMIT_MS * Math.pow(2, retryCount);
+      console.log(`  [RETRY ${retryCount + 1}/${MAX_RETRIES}] ${response.status} -- ${delay}ms`);
+      await sleep(delay);
+      return callGoogle(prompt, retryCount + 1);
+    }
+    throw new Error(`Google AI ${response.status}: ${errBody.substring(0, 200)}`);
+  }
+
+  const data = await response.json();
+  const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+  const usage = {
+    prompt_tokens: data.usageMetadata?.promptTokenCount || 0,
+    completion_tokens: data.usageMetadata?.candidatesTokenCount || 0,
+  };
+
+  return { content, usage };
+}
+
+async function callOpenRouter(prompt, retryCount = 0) {
+  const response = await fetch(OPENROUTER_URL, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${API_KEY}`,
+      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
       'HTTP-Referer': 'https://cblrs.net',
       'X-Title': 'Caballarius'
     },
     body: JSON.stringify({
-      model: MODEL,
+      model: OPENROUTER_MODEL,
       messages: [
         {
           role: 'system',
@@ -240,7 +287,7 @@ async function callLLM(prompt, retryCount = 0) {
       const delay = RATE_LIMIT_MS * Math.pow(2, retryCount);
       console.log(`  [RETRY ${retryCount + 1}/${MAX_RETRIES}] ${response.status} -- ${delay}ms`);
       await sleep(delay);
-      return callLLM(prompt, retryCount + 1);
+      return callOpenRouter(prompt, retryCount + 1);
     }
     throw new Error(`OpenRouter ${response.status}: ${errBody.substring(0, 200)}`);
   }
@@ -459,14 +506,19 @@ async function main() {
     console.error('ERREUR: DB_PASS manquant');
     process.exit(1);
   }
-  if (!API_KEY) {
+  if (AI_PROVIDER === 'google' && !GOOGLE_API_KEY) {
+    console.error('ERREUR: GOOGLE_API_KEY manquant');
+    process.exit(1);
+  }
+  if (AI_PROVIDER === 'openrouter' && !OPENROUTER_API_KEY) {
     console.error('ERREUR: OPENROUTER_API_KEY manquant');
     process.exit(1);
   }
 
+  const modelLabel = AI_PROVIDER === 'google' ? 'Gemini 2.5 Flash (Google)' : `${OPENROUTER_MODEL} (OpenRouter)`;
   console.log('='.repeat(60));
-  console.log('SKILL 01 -- Scrape establishments (Kimi K2.5 Phase 1, 2 passes)');
-  console.log(`Modele: ${MODEL} | 2 requetes/localite`);
+  console.log('SKILL 01 -- Scrape establishments (2 passes)');
+  console.log(`Provider: ${AI_PROVIDER} | Modele: ${modelLabel} | 2 requetes/localite`);
   console.log(`Batch: ${opts.batch} | Dry run: ${opts.dryRun} | Locality: ${opts.localityId || 'auto'} | Limit: ${opts.limit || 'none'}`);
   console.log('='.repeat(60));
 

@@ -5,8 +5,13 @@
 
 const mysql = require('mysql2/promise');
 
+// AI Provider: google (Gemini 2.5 Flash, gratuit) ou openrouter (Kimi K2.5)
+const AI_PROVIDER = (process.env.AI_PROVIDER || 'google').toLowerCase();
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
+const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
-const MODEL = 'moonshotai/kimi-k2.5';
+const OPENROUTER_MODEL = 'moonshotai/kimi-k2.5';
+const GOOGLE_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GOOGLE_API_KEY}`;
 const ALWAYS_LANGS = ['fr', 'en'];
 const DELAY_MS = 1500; // 1.5s entre chaque appel API
 const ERROR_DELAY_MS = 5000;
@@ -24,7 +29,7 @@ const DB_CONFIG = {
   charset: 'utf8mb4'
 };
 
-const API_KEY = process.env.OPENROUTER_API_KEY;
+const API_KEY = AI_PROVIDER === 'google' ? GOOGLE_API_KEY : OPENROUTER_API_KEY;
 
 function log(msg) {
   console.log(`[${new Date().toISOString()}] ${msg}`);
@@ -116,19 +121,65 @@ function repairJSON(raw) {
   throw new Error(`JSON repair failed (len=${raw.length})`);
 }
 
-async function callKimi(prompt, retries = 2) {
+async function callLLM(prompt, retries = 2) {
+  if (AI_PROVIDER === 'google') {
+    return callGoogle(prompt, retries);
+  }
+  return callOpenRouter(prompt, retries);
+}
+
+async function callGoogle(prompt, retries = 2) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      const res = await fetch(GOOGLE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ parts: [{ text: prompt }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.7,
+            maxOutputTokens: 4000,
+          },
+        })
+      });
+
+      if (res.status === 429) {
+        const wait = Math.pow(2, attempt + 1) * 5000;
+        log(`Rate limited, waiting ${wait / 1000}s (attempt ${attempt + 1}/${retries + 1})`);
+        await sleep(wait);
+        continue;
+      }
+
+      if (!res.ok) {
+        const err = await res.text();
+        throw new Error(`Google AI ${res.status}: ${err.substring(0, 200)}`);
+      }
+
+      const data = await res.json();
+      const content = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+      return repairJSON(content);
+    } catch (err) {
+      if (attempt === retries) throw err;
+      log(`Retry ${attempt + 1}: ${err.message}`);
+      await sleep(3000);
+    }
+  }
+}
+
+async function callOpenRouter(prompt, retries = 2) {
   for (let attempt = 0; attempt <= retries; attempt++) {
     try {
       const res = await fetch(OPENROUTER_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${API_KEY}`,
+          'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
           'HTTP-Referer': 'https://cblrs.net',
           'X-Title': 'Caballarius'
         },
         body: JSON.stringify({
-          model: MODEL,
+          model: OPENROUTER_MODEL,
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
           temperature: 0.7,
@@ -145,7 +196,7 @@ async function callKimi(prompt, retries = 2) {
 
       if (!res.ok) {
         const err = await res.text();
-        throw new Error(`OpenRouter ${res.status}: ${err}`);
+        throw new Error(`OpenRouter ${res.status}: ${err.substring(0, 200)}`);
       }
 
       const data = await res.json();
@@ -165,9 +216,11 @@ function sleep(ms) {
 
 async function main() {
   if (!DB_CONFIG.password) { console.error('ERROR: Set DB_PASS'); process.exit(1); }
-  if (!API_KEY) { console.error('ERROR: Set OPENROUTER_API_KEY'); process.exit(1); }
+  if (AI_PROVIDER === 'google' && !GOOGLE_API_KEY) { console.error('ERROR: Set GOOGLE_API_KEY'); process.exit(1); }
+  if (AI_PROVIDER === 'openrouter' && !OPENROUTER_API_KEY) { console.error('ERROR: Set OPENROUTER_API_KEY'); process.exit(1); }
 
-  log(`=== ENRICHMENT START === model=${MODEL} batch=${BATCH_SIZE} delay=${DELAY_MS}ms`);
+  const modelLabel = AI_PROVIDER === 'google' ? 'Gemini 2.5 Flash (Google)' : `${OPENROUTER_MODEL} (OpenRouter)`;
+  log(`=== ENRICHMENT START === provider=${AI_PROVIDER} model=${modelLabel} batch=${BATCH_SIZE} delay=${DELAY_MS}ms`);
 
   const db = await mysql.createConnection(DB_CONFIG);
 
@@ -261,7 +314,7 @@ async function main() {
         // Generate content per language
         for (const lang of langs) {
           const prompt = buildPrompt(lang, loc);
-          const result = await callKimi(prompt);
+          const result = await callLLM(prompt);
           apiCalls++;
 
           await db.execute(`
@@ -282,7 +335,7 @@ async function main() {
             (result.seo_title || '').substring(0, 100),
             (result.seo_description || '').substring(0, 200),
             result.practical_info || '',
-            MODEL
+            AI_PROVIDER === 'google' ? 'gemini-2.5-flash' : OPENROUTER_MODEL
           ]);
 
           await sleep(DELAY_MS);

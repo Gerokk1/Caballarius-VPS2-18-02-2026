@@ -27,7 +27,7 @@
         "typeVersion": 2.4,
         "position": [450, 300],
         "credentials": {
-          "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" }
+          "mySql": { "id": "a1b2c3d4-mysql-cblrs-staging", "name": "MariaDB Staging" }
         }
       },
       {
@@ -52,7 +52,7 @@
         "typeVersion": 2.4,
         "position": [950, 300],
         "credentials": {
-          "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" }
+          "mySql": { "id": "a1b2c3d4-mysql-cblrs-staging", "name": "MariaDB Staging" }
         }
       }
     ],

@@ -1,13 +1,10 @@
 #!/usr/bin/env node
 /**
- * SKILL 01-scrape-sonar — Brave Search + Kimi K2.5
+ * SKILL 01-scrape-sonar — Kimi K2.5 via OpenRouter (GRATUIT)
  *
- * Architecture :
- *   1. Brave Search API (gratuit, 2000 req/mois) → résultats web bruts
- *   2. Kimi K2.5 via OpenRouter (gratuit) → extraction JSON structuré
- *
- * 2 recherches Brave + 1 appel Kimi par localité = 3 appels, $0.
- * 2000 req Brave/mois = ~666 localités/mois (3 mois pour 2356).
+ * Phase 1 : Kimi K2.5 (gratuit) scrape toutes les localites de memoire.
+ * Phase 2 (semaine prochaine) : Sonar Pro verifie et complete.
+ * 2 passes par localite : hebergement+resto puis services.
  *
  * Usage:
  *   node index.js --batch 20
@@ -27,19 +24,17 @@ const DB_CONFIG = {
   charset: 'utf8mb4',
 };
 
-const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+// Phase 1: Kimi K2.5 (gratuit via OpenRouter) — scrape de memoire
+// Phase 2 (semaine prochaine): basculer sur Sonar Pro pour verifier
+const API_KEY = process.env.OPENROUTER_API_KEY || '';
+const API_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const MODEL = 'moonshotai/kimi-k2.5';
 
-const BRAVE_API_KEY = process.env.BRAVE_API_KEY || '';
-const BRAVE_SEARCH_URL = 'https://api.search.brave.com/res/v1/web/search';
-
-const BRAVE_RATE_MS = 1100;  // Brave free = 1 req/sec
-const KIMI_RATE_MS = 1000;
+const RATE_LIMIT_MS = 1500;
 const MAX_RETRIES = 3;
 const DEFAULT_BATCH = 20;
 
-// 32 catégories Caballarius (doit matcher l'ENUM establishments.category)
+// 32 categories Caballarius (doit matcher l'ENUM establishments.category)
 const VALID_CATEGORIES = new Set([
   'albergue','hotel','gite','pension','camping',
   'restaurant','bar','cafe','boulangerie','epicerie','supermarche',
@@ -50,37 +45,37 @@ const VALID_CATEGORIES = new Set([
   'artisan','coup_de_pouce',
 ]);
 
-// Mapping mots courants → catégorie ENUM
+// Mapping mots courants → categorie ENUM
 const CATEGORY_ALIASES = {
-  'accommodation': 'albergue', 'hébergement': 'albergue', 'lodging': 'albergue',
+  'accommodation': 'albergue', 'hebergement': 'albergue', 'lodging': 'albergue',
   'auberge': 'albergue', 'hostel': 'albergue', 'refugio': 'albergue', 'refuge': 'albergue', 'albergue': 'albergue',
-  'hotel': 'hotel', 'hôtel': 'hotel', 'hostal': 'hotel',
-  'gîte': 'gite', 'gite': 'gite', "chambre d'hôte": 'gite', "chambre d'hotes": 'gite', "chambres d'hotes": 'gite', "chambres d'hôtes": 'gite', 'casa rural': 'gite',
-  'pension': 'pension', 'pensión': 'pension', 'b&b': 'pension', 'bed and breakfast': 'pension',
+  'hotel': 'hotel', 'hostal': 'hotel',
+  'gite': 'gite', "chambre d'hote": 'gite', "chambre d'hotes": 'gite', "chambres d'hotes": 'gite', 'casa rural': 'gite',
+  'pension': 'pension', 'b&b': 'pension', 'bed and breakfast': 'pension',
   'camping': 'camping',
   'restaurant': 'restaurant', 'restaurante': 'restaurant',
   'bar': 'bar', 'pub': 'bar', 'taberna': 'bar',
-  'café': 'cafe', 'cafe': 'cafe', 'cafetería': 'cafe', 'cafeteria': 'cafe',
-  'boulangerie': 'boulangerie', 'panadería': 'boulangerie', 'panaderia': 'boulangerie', 'bakery': 'boulangerie',
-  'épicerie': 'epicerie', 'epicerie': 'epicerie', 'tienda': 'epicerie', 'grocery': 'epicerie', 'minimarket': 'epicerie',
-  'supermarché': 'supermarche', 'supermarche': 'supermarche', 'supermercado': 'supermarche', 'supermarket': 'supermarche',
+  'cafe': 'cafe', 'cafeteria': 'cafe',
+  'boulangerie': 'boulangerie', 'panaderia': 'boulangerie', 'bakery': 'boulangerie',
+  'epicerie': 'epicerie', 'tienda': 'epicerie', 'grocery': 'epicerie', 'minimarket': 'epicerie',
+  'supermarche': 'supermarche', 'supermercado': 'supermarche', 'supermarket': 'supermarche',
   'pharmacie': 'pharmacie', 'farmacia': 'pharmacie', 'pharmacy': 'pharmacie',
-  'médecin': 'medecin', 'medecin': 'medecin', 'doctor': 'medecin', 'médico': 'medecin',
-  'hôpital': 'hopital', 'hopital': 'hopital', 'hospital': 'hopital', 'centro de salud': 'hopital',
-  'podologue': 'podologue', 'podólogo': 'podologue',
+  'medecin': 'medecin', 'doctor': 'medecin', 'medico': 'medecin',
+  'hopital': 'hopital', 'hospital': 'hopital', 'centro de salud': 'hopital',
+  'podologue': 'podologue', 'podologo': 'podologue',
   'fontaine': 'fontaine', 'fuente': 'fontaine', 'fountain': 'fontaine',
-  'laverie': 'laverie', 'lavandería': 'laverie', 'laundry': 'laverie', 'lavadero': 'laverie',
+  'laverie': 'laverie', 'lavanderia': 'laverie', 'laundry': 'laverie', 'lavadero': 'laverie',
   'banque': 'banque', 'banco': 'banque', 'bank': 'banque',
   'distributeur': 'dab', 'dab': 'dab', 'atm': 'dab', 'cajero': 'dab',
   'poste': 'poste', 'correos': 'poste', 'post office': 'poste',
   'office de tourisme': 'office_tourisme', 'oficina de turismo': 'office_tourisme', 'tourist office': 'office_tourisme',
-  'location vélo': 'location_velo', 'location velo': 'location_velo', 'bike rental': 'location_velo', 'alquiler bicicletas': 'location_velo',
+  'location velo': 'location_velo', 'bike rental': 'location_velo', 'alquiler bicicletas': 'location_velo',
   'transport bagages': 'transport_bagages', 'luggage transfer': 'transport_bagages', 'transporte equipajes': 'transport_bagages',
   'taxi': 'taxi',
-  'église': 'eglise', 'eglise': 'eglise', 'iglesia': 'eglise', 'church': 'eglise',
-  'cathédrale': 'cathedrale', 'cathedrale': 'cathedrale', 'catedral': 'cathedrale', 'cathedral': 'cathedrale',
-  'monastère': 'monastere', 'monastere': 'monastere', 'monasterio': 'monastere', 'monastery': 'monastere', 'convento': 'monastere',
-  'musée': 'musee', 'musee': 'musee', 'museo': 'musee', 'museum': 'musee',
+  'eglise': 'eglise', 'iglesia': 'eglise', 'church': 'eglise',
+  'cathedrale': 'cathedrale', 'catedral': 'cathedrale', 'cathedral': 'cathedrale',
+  'monastere': 'monastere', 'monasterio': 'monastere', 'monastery': 'monastere', 'convento': 'monastere',
+  'musee': 'musee', 'museo': 'musee', 'museum': 'musee',
   'monument': 'monument', 'monumento': 'monument',
   'point de vue': 'point_de_vue', 'mirador': 'point_de_vue', 'viewpoint': 'point_de_vue',
   'artisan': 'artisan', 'artesano': 'artisan',
@@ -106,13 +101,10 @@ function mapCategory(raw) {
   if (!raw) return null;
   const normalized = raw.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim();
 
-  // Direct match dans VALID_CATEGORIES
   if (VALID_CATEGORIES.has(normalized)) return normalized;
 
-  // Match via aliases (substring, both sides normalized)
   for (const [alias, cat] of Object.entries(CATEGORY_ALIASES)) {
-    const normAlias = alias.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    if (normalized.includes(normAlias) || normAlias.includes(normalized)) return cat;
+    if (normalized.includes(alias) || alias.includes(normalized)) return cat;
   }
 
   return null;
@@ -168,107 +160,96 @@ function parseArgs() {
   return opts;
 }
 
-// ─── Brave Search API ───────────────────────────────────────────────────────
+// ─── Perplexity Sonar API ───────────────────────────────────────────────────
 
-async function searchBrave(query, retryCount = 0) {
-  const url = `${BRAVE_SEARCH_URL}?q=${encodeURIComponent(query)}&count=10`;
-  const response = await fetch(url, {
-    headers: {
-      'Accept': 'application/json',
-      'Accept-Encoding': 'gzip',
-      'X-Subscription-Token': BRAVE_API_KEY,
-    },
-  });
-
-  if (!response.ok) {
-    const errBody = await response.text();
-    if (retryCount < MAX_RETRIES && (response.status === 429 || response.status >= 500)) {
-      const delay = BRAVE_RATE_MS * Math.pow(2, retryCount);
-      console.log(`  [BRAVE RETRY ${retryCount + 1}/${MAX_RETRIES}] ${response.status} — ${delay}ms`);
-      await sleep(delay);
-      return searchBrave(query, retryCount + 1);
-    }
-    throw new Error(`Brave ${response.status}: ${errBody.substring(0, 200)}`);
-  }
-
-  const data = await response.json();
-  const results = (data.web?.results || []).slice(0, 10);
-
-  return results.map(r => ({
-    title: r.title || '',
-    url: r.url || '',
-    description: r.description || '',
-  }));
-}
-
-// ─── Kimi K2.5 via OpenRouter ───────────────────────────────────────────────
-
-function buildKimiPrompt(localityName, routeName, searchResults) {
-  const resultsText = searchResults.map((r, i) =>
-    `${i + 1}. ${r.title}\n   ${r.url}\n   ${r.description}`
-  ).join('\n\n');
-
-  return `Voici des résultats de recherche web pour les établissements à "${localityName}" sur le ${routeName} (Camino de Santiago).
-
-RÉSULTATS DE RECHERCHE :
-${resultsText}
-
-À partir de ces résultats, extrais TOUS les établissements mentionnés.
-Pour chaque établissement, donne :
-- name : nom exact de l'établissement
-- category : exactement un de [albergue, hotel, gite, pension, camping, restaurant, bar, cafe, boulangerie, epicerie, supermarche, pharmacie, medecin, hopital, podologue, fontaine, laverie, banque, dab, poste, office_tourisme, location_velo, transport_bagages, taxi, eglise, cathedrale, monastere, musee, monument, point_de_vue]
-- address : adresse (ou null)
-- phone : téléphone (ou null)
+const JSON_FIELDS = `Pour CHAQUE etablissement, donne :
+- name : nom exact
+- category : exactement un de la liste ci-dessus
+- address : adresse complete
+- phone : telephone (ou null)
 - email : email (ou null)
 - website : URL (ou null)
 - opening_hours : horaires (ou null)
 - google_rating : note /5 (ou null)
 - google_reviews_count : nombre d'avis (ou 0)
-- price_level : 1 à 4 (ou null)
+- price_level : 1 (bon marche) a 4 (luxe) (ou null)
 - services : tableau de strings (ou [])
 
-Réponds UNIQUEMENT avec du JSON valide :
+Reponds UNIQUEMENT avec du JSON valide :
 {"establishments": [...]}
-Si aucun établissement trouvé : {"establishments": []}`;
+Si tu ne trouves rien : {"establishments": []}`;
+
+function buildPromptPass1(localityName, routeName) {
+  return `Liste TOUS les hebergements et restaurants pour pelerins a "${localityName}" sur le "${routeName}" (Camino de Santiago).
+
+Cherche specifiquement :
+- Hebergements : albergue, hotel, gite, pension, camping (auberges de pelerins, refuges, hostels, chambres d'hotes, casa rural)
+- Restaurants et alimentation : restaurant, bar, cafe, boulangerie, epicerie, supermarche
+
+Sois exhaustif -- liste TOUS les etablissements existants, meme les petits.
+
+${JSON_FIELDS}`;
 }
 
-async function callKimi(prompt, retryCount = 0) {
-  const response = await fetch(OPENROUTER_URL, {
+function buildPromptPass2(localityName, routeName) {
+  return `Quels sont les services, commerces et lieux d'interet a "${localityName}" (${routeName}, Camino de Santiago) ?
+
+Je cherche les noms et adresses exacts de :
+- Pharmacies et centres medicaux (pharmacie, medecin, hopital, centro de salud)
+- Supermarches et epiceries (supermarche, tienda, minimarket)
+- Banques et distributeurs automatiques (banco, cajero, ATM)
+- Bureau de poste (correos)
+- Laveries automatiques (lavanderia, laverie)
+- Office de tourisme
+- Taxi et transport de bagages
+- Eglises, cathedrales et monasteres
+- Musees, monuments et points de vue remarquables
+
+Liste chaque etablissement avec son nom reel et son adresse exacte.
+
+${JSON_FIELDS}`;
+}
+
+async function callLLM(prompt, retryCount = 0) {
+  const response = await fetch(API_URL, {
     method: 'POST',
     headers: {
-      'Authorization': `Bearer ${OPENROUTER_API_KEY}`,
       'Content-Type': 'application/json',
+      'Authorization': `Bearer ${API_KEY}`,
       'HTTP-Referer': 'https://cblrs.net',
-      'X-Title': 'Caballarius-Skill01',
+      'X-Title': 'Caballarius'
     },
     body: JSON.stringify({
       model: MODEL,
       messages: [
         {
           role: 'system',
-          content: 'Tu es un extracteur de données. Tu analyses des résultats de recherche web et tu extrais les établissements mentionnés en JSON structuré. UNIQUEMENT du JSON, sans markdown, sans commentaire.'
+          content: 'Tu es un assistant specialise dans les chemins de Compostelle. Tu retournes UNIQUEMENT du JSON valide, sans markdown, sans commentaire, sans texte additionnel.'
         },
         { role: 'user', content: prompt }
       ],
+      response_format: { type: 'json_object' },
       temperature: 0.1,
-      max_tokens: 16384,
+      max_tokens: 8000,
     }),
   });
 
   if (!response.ok) {
     const errBody = await response.text();
     if (retryCount < MAX_RETRIES && (response.status === 429 || response.status >= 500)) {
-      const delay = KIMI_RATE_MS * Math.pow(2, retryCount);
-      console.log(`  [KIMI RETRY ${retryCount + 1}/${MAX_RETRIES}] ${response.status} — ${delay}ms`);
+      const delay = RATE_LIMIT_MS * Math.pow(2, retryCount);
+      console.log(`  [RETRY ${retryCount + 1}/${MAX_RETRIES}] ${response.status} -- ${delay}ms`);
       await sleep(delay);
-      return callKimi(prompt, retryCount + 1);
+      return callLLM(prompt, retryCount + 1);
     }
     throw new Error(`OpenRouter ${response.status}: ${errBody.substring(0, 200)}`);
   }
 
   const data = await response.json();
   const content = data.choices?.[0]?.message?.content || '';
-  return { content };
+  const usage = data.usage || {};
+
+  return { content, usage };
 }
 
 // ─── Database ───────────────────────────────────────────────────────────────
@@ -380,98 +361,80 @@ async function logScrapeJob(db, localityId, status, count, costUsd, errorLog) {
 
 // ─── Main ───────────────────────────────────────────────────────────────────
 
+async function runPass(passLabel, prompt) {
+  let result;
+  try {
+    result = await callLLM(prompt);
+  } catch (err) {
+    console.log(`  [ERREUR ${passLabel}] ${err.message}`);
+    return { establishments: [], tokensIn: 0, tokensOut: 0, error: err.message };
+  }
+
+  const parsed = extractJSON(result.content);
+  if (!parsed || !Array.isArray(parsed.establishments)) {
+    console.log(`  [PARSE ERR ${passLabel}] (${result.content.length} chars):`);
+    console.log(`  ${result.content.substring(0, 300)}`);
+    return { establishments: [], tokensIn: 0, tokensOut: 0, error: 'parse_failed' };
+  }
+
+  const tokensIn = result.usage.prompt_tokens || 0;
+  const tokensOut = result.usage.completion_tokens || 0;
+  console.log(`  ${passLabel} -> ${parsed.establishments.length} etablissements (${tokensIn}+${tokensOut} tokens)`);
+  return { establishments: parsed.establishments, tokensIn, tokensOut, error: null };
+}
+
 async function processLocality(db, locality, dryRun) {
   const { id, name, lat, lng, route_names } = locality;
   const routeName = route_names || 'Camino de Santiago';
 
   console.log(`\n[${id}] ${name} (${lat}, ${lng}) -- ${routeName}`);
 
-  // 1. Marquer in_progress
   if (!dryRun) await setLocalityStatus(db, id, 'in_progress');
 
-  // 2. Brave Search #1 : hebergement + restauration
-  const query1 = `hebergement albergue hotel restaurant "${name}" Camino de Santiago`;
-  console.log(`  BRAVE #1: ${query1}`);
-  let results1 = [];
-  try {
-    results1 = await searchBrave(query1);
-    console.log(`  -> ${results1.length} resultats web`);
-  } catch (err) {
-    console.log(`  [ERREUR BRAVE #1] ${err.message}`);
-  }
+  // PASSE 1 -- Hebergement + restauration
+  const pass1 = await runPass('PASS1-hebergement', buildPromptPass1(name, routeName));
+  await sleep(RATE_LIMIT_MS);
 
-  await sleep(BRAVE_RATE_MS);
+  // PASSE 2 -- Services + patrimoine
+  const pass2 = await runPass('PASS2-services', buildPromptPass2(name, routeName));
 
-  // 3. Brave Search #2 : services
-  const query2 = `pharmacie banque office tourisme eglise "${name}" services`;
-  console.log(`  BRAVE #2: ${query2}`);
-  let results2 = [];
-  try {
-    results2 = await searchBrave(query2);
-    console.log(`  -> ${results2.length} resultats web`);
-  } catch (err) {
-    console.log(`  [ERREUR BRAVE #2] ${err.message}`);
-  }
-
-  // 4. Combiner les resultats
-  const allResults = [...results1, ...results2];
-  if (allResults.length === 0) {
-    console.log(`  [AUCUN RESULTAT] Brave n'a rien trouve`);
+  if (pass1.error && pass2.error) {
     if (!dryRun) {
       await setLocalityStatus(db, id, 'error');
-      await logScrapeJob(db, id, 'error', 0, 0, 'No Brave results');
+      await logScrapeJob(db, id, 'error', 0, 0, `${pass1.error}; ${pass2.error}`);
     }
-    return { inserted: 0, skipped: 0, error: 'no_brave_results' };
+    return { inserted: 0, skipped: 0, error: `${pass1.error}; ${pass2.error}` };
   }
 
-  console.log(`  ${allResults.length} resultats web combines -> Kimi K2.5...`);
+  // Fusionner
+  const allEstablishments = [...pass1.establishments, ...pass2.establishments];
+  const totalTokensIn = pass1.tokensIn + pass2.tokensIn;
+  const totalTokensOut = pass1.tokensOut + pass2.tokensOut;
+  const costUsd = 0; // Kimi K2.5 gratuit sur OpenRouter
 
-  await sleep(KIMI_RATE_MS);
-
-  // 5. Kimi K2.5 extrait les etablissements
-  const kimiPrompt = buildKimiPrompt(name, routeName, allResults);
-  let kimiResult;
-  try {
-    kimiResult = await callKimi(kimiPrompt);
-  } catch (err) {
-    console.log(`  [ERREUR KIMI] ${err.message}`);
-    if (!dryRun) {
-      await setLocalityStatus(db, id, 'error');
-      await logScrapeJob(db, id, 'error', 0, 0, err.message);
-    }
-    return { inserted: 0, skipped: 0, error: err.message };
-  }
-
-  // 6. Parser la reponse JSON
-  const parsed = extractJSON(kimiResult.content);
-  if (!parsed || !Array.isArray(parsed.establishments)) {
-    console.log(`  [ERREUR PARSE] Reponse non-JSON (${kimiResult.content.length} chars):`);
-    console.log(`  ${kimiResult.content.substring(0, 300)}`);
-    if (!dryRun) {
-      await setLocalityStatus(db, id, 'error');
-      await logScrapeJob(db, id, 'error', 0, 0, 'JSON parse failed');
-    }
-    return { inserted: 0, skipped: 0, error: 'parse_failed' };
-  }
-
-  const establishments = parsed.establishments;
-  console.log(`  Kimi -> ${establishments.length} etablissements extraits`);
+  console.log(`  TOTAL: ${allEstablishments.length} etablissements, ~$${costUsd.toFixed(4)}`);
 
   if (dryRun) {
     let mapped = 0;
-    for (const est of establishments) {
+    const seen = new Set();
+    for (const est of allEstablishments) {
       const cat = mapCategory(est.category);
-      const label = cat ? `+ ${cat}` : `x "${est.category}"`;
+      const nameKey = (est.name || '').trim().toLowerCase();
+      const isDupe = seen.has(nameKey);
+      seen.add(nameKey);
+      const label = cat
+        ? (isDupe ? `~ ${cat} (doublon)` : `+ ${cat}`)
+        : `x "${est.category}"`;
       console.log(`    ${label} -- ${est.name}`);
-      if (cat) mapped++;
+      if (cat && !isDupe) mapped++;
     }
-    console.log(`  [DRY RUN] ${mapped}/${establishments.length} categorises, $0`);
-    return { inserted: mapped, skipped: establishments.length - mapped, error: null };
+    console.log(`  [DRY RUN] ${mapped} uniques / ${allEstablishments.length} bruts, ~$${costUsd.toFixed(4)}`);
+    return { inserted: mapped, skipped: allEstablishments.length - mapped, error: null };
   }
 
-  // 7. Inserer en BDD
+  // Inserer en BDD (ON DUPLICATE KEY UPDATE gere les doublons inter-pass)
   let inserted = 0, skipped = 0;
-  for (const est of establishments) {
+  for (const est of allEstablishments) {
     const estId = await insertEstablishment(db, id, lat, lng, est);
     if (estId) {
       await insertSource(db, estId, est);
@@ -482,37 +445,29 @@ async function processLocality(db, locality, dryRun) {
     }
   }
 
-  // 8. Mettre a jour le statut
   await setLocalityStatus(db, id, 'done');
-  await logScrapeJob(db, id, 'done', inserted, 0, null);
+  await logScrapeJob(db, id, 'done', inserted, costUsd, null);
 
-  console.log(`  -> ${inserted} inseres, ${skipped} ignores, $0`);
+  console.log(`  -> ${inserted} inseres, ${skipped} ignores, ~$${costUsd.toFixed(4)}`);
   return { inserted, skipped, error: null };
 }
 
 async function main() {
   const opts = parseArgs();
 
-  // Validations
   if (!DB_CONFIG.password) {
-    console.error('ERREUR: DB_PASS non defini. export DB_PASS="..."');
+    console.error('ERREUR: DB_PASS manquant');
     process.exit(1);
   }
-  if (!OPENROUTER_API_KEY) {
-    console.error('ERREUR: OPENROUTER_API_KEY non defini. export OPENROUTER_API_KEY="sk-or-..."');
-    process.exit(1);
-  }
-  if (!BRAVE_API_KEY) {
-    console.error('ERREUR: BRAVE_API_KEY non defini. export BRAVE_API_KEY="BSA..."');
-    console.error('Cree une cle gratuite : https://api.search.brave.com/app/keys');
+  if (!API_KEY) {
+    console.error('ERREUR: OPENROUTER_API_KEY manquant');
     process.exit(1);
   }
 
   console.log('='.repeat(60));
-  console.log('SKILL 01 -- Brave Search + Kimi K2.5');
-  console.log(`Brave: 2 recherches/localite | Kimi: ${MODEL}`);
+  console.log('SKILL 01 -- Scrape establishments (Kimi K2.5 Phase 1, 2 passes)');
+  console.log(`Modele: ${MODEL} | 2 requetes/localite`);
   console.log(`Batch: ${opts.batch} | Dry run: ${opts.dryRun} | Locality: ${opts.localityId || 'auto'} | Limit: ${opts.limit || 'none'}`);
-  console.log('Cout: $0 (Brave free + Kimi free)');
   console.log('='.repeat(60));
 
   const db = await mysql.createConnection(DB_CONFIG);
@@ -522,7 +477,7 @@ async function main() {
     console.log(`Localites pending: ${pending}`);
 
     let totalInserted = 0, totalSkipped = 0, totalErrors = 0;
-    let braveQueries = 0;
+    let totalCost = 0;
     let processed = 0;
 
     while (true) {
@@ -543,12 +498,11 @@ async function main() {
         totalInserted += result.inserted;
         totalSkipped += result.skipped;
         if (result.error) totalErrors++;
-        braveQueries += 2;
         processed++;
 
         if (opts.limit && processed >= opts.limit) break;
 
-        await sleep(BRAVE_RATE_MS);
+        await sleep(RATE_LIMIT_MS);
       }
 
       if (opts.localityId) break;
@@ -561,8 +515,6 @@ async function main() {
     console.log(`  Etablissements inseres: ${totalInserted}`);
     console.log(`  Etablissements ignores: ${totalSkipped}`);
     console.log(`  Erreurs: ${totalErrors}`);
-    console.log(`  Requetes Brave utilisees: ${braveQueries}/2000`);
-    console.log(`  Cout total: $0`);
     console.log('='.repeat(60));
 
   } finally {

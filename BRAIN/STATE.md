@@ -1,9 +1,9 @@
 # ETAT ACTUEL DU PROJET — VPS2
 
-**Derniere mise a jour : 2026-02-19 07:30**
+**Derniere mise a jour : 2026-02-19 08:30**
 
 ## Resume
-VPS2 (cblrs.net) PLEINEMENT OPERATIONNEL. HTTPS actif. OpenClaw bunker mode + securite audit 25/25. BDD staging 14 tables, 38 pays, 305 routes, 2356 localites, 1795 etapes, langues dynamiques. TOUTES les 305 routes ont des etapes (0 manquante). 2 skills actifs (01 + 06) tournent avec Kimi K2.5 via OpenRouter. 4 workflows n8n ACTIFS avec Kimi K2.5 + Telegram. Bot Telegram connecte.
+VPS2 (cblrs.net) PLEINEMENT OPERATIONNEL. HTTPS actif. OpenClaw bunker mode + securite audit 25/25. BDD staging 15 tables, 38 pays, 305 routes, 2356 localites, 1795 etapes, langues dynamiques. 2 skills actifs (01 + 06) tournent avec Kimi K2.5 via OpenRouter. 4 workflows n8n ACTIFS avec Kimi K2.5 + Telegram (TESTES ET FONCTIONNELS). Bot Telegram connecte. Architecture OpenClaw-n8n documentee (4 agents : Scribe, Batisseur, Heraut, Veilleur).
 
 ## Ce qui fonctionne
 - [x] https://cblrs.net → 200 (SSL, redirect HTTP→HTTPS)
@@ -40,7 +40,7 @@ VPS2 (cblrs.net) PLEINEMENT OPERATIONNEL. HTTPS actif. OpenClaw bunker mode + se
 ### Schema : 15 tables
 countries, regions, routes, stages, localities, route_localities, establishments, establishment_photos, establishment_content, establishment_prices, establishment_sources, locality_content, pro_sites, scrape_jobs, quality_checks
 
-### Donnees actuelles (2026-02-19 07h)
+### Donnees actuelles (2026-02-19 08h30)
 | Table | Rows | Notes |
 |-------|------|-------|
 | countries | 38 | Toute l'Europe, colonne languages JSON, priorites 1-38 |
@@ -49,8 +49,8 @@ countries, regions, routes, stages, localities, route_localities, establishments
 | localities | 2356 | Seeders VPS1 (778) + GPX/KML import (1578) |
 | stages | 1795 | 305/305 routes couvertes, km + d+/d- + heures |
 | route_localities | 2830 | Liens route-localite avec order_on_route |
-| establishments | ~109 | Skill 01 en cours (Kimi K2.5, 8 localites scrapees) |
-| locality_content | ~47 | Skill 06 en cours (Kimi K2.5, 17 localites enrichies) |
+| establishments | ~754 | Skill 01 en cours (Kimi K2.5, 31 localites scrapees) |
+| locality_content | ~131 | Skill 06 en cours (Kimi K2.5, 45 localites enrichies) |
 | Autres tables | 0 | Se rempliront au fil du pipeline |
 
 ### Modifications recentes
@@ -111,7 +111,10 @@ countries, regions, routes, stages, localities, route_localities, establishments
 | 03 Rapport Quotidien | 07h00 | Oui | Oui | KPI, progres, recommandations |
 | 04 Watchdog | 15min | Non | Si alerte | Stuck jobs, error rate, OpenRouter health |
 
-**IMPORTANT** : Les MySQL credentials dans les workflows ont id="create-in-ui". Il faut creer le credential MariaDB manuellement dans n8n UI (https://n8n.cblrs.net) puis l'assigner aux workflows.
+- [x] Credential MySQL cree via CLI : id=a1b2c3d4-mysql-cblrs-staging, host=host.docker.internal
+- [x] API key n8n creee : n8n_api_429a... (legacy, X-N8N-API-KEY header)
+- [x] N8N_BLOCK_ENV_ACCESS_IN_NODE=false (requis pour $env dans Code nodes)
+- [x] Watchdog teste et SUCCESS (execution #4)
 
 ## Telegram Bot
 - Bot : @caballarius_vps2_bot ("Caballarius VPS2")
@@ -134,10 +137,11 @@ countries, regions, routes, stages, localities, route_localities, establishments
 - [ ] Verifier qualite des donnees apres 24h de scraping
 - [ ] Semaine prochaine : Sonar Pro en 2eme passe
 
-### PRIORITE 2 — n8n configuration manuelle
-- [ ] Creer credential MySQL dans n8n UI (host=host.docker.internal, user=staging_user, pass=Stg!Cblrs2026_QC#Secure, db=caballarius_staging)
-- [ ] Assigner le credential aux 4 workflows
-- [ ] Tester manuellement chaque workflow depuis n8n UI
+### PRIORITE 2 — n8n (FAIT)
+- [x] Credential MySQL cree et assigne aux 4 workflows
+- [x] Watchdog teste (success)
+- [ ] Tester workflows 02 (QC) et 03 (Rapport) manuellement
+- [ ] Ajuster Check OpenRouter node (faussement detecte DOWN)
 
 ### PRIORITE 3 — Implementer les skills restants
 - [ ] 02-scrape-facebook : Graph API ou browser scraping

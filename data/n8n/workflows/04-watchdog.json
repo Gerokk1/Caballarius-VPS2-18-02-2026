@@ -53,6 +53,17 @@
       },
       {
         "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const data = $input.first().json;\nif (data.status === 'OK') return [{ json: { telegram: 'skipped - all OK' } }];\n\nconst token = $env.TELEGRAM_BOT_TOKEN;\nconst chatId = $env.TELEGRAM_CHAT_ID;\nif (!token || !chatId) return [{ json: { telegram: 'skipped - no token/chatId' } }];\n\nconst icon = data.status === 'CRITICAL' ? '🚨' : '⚠️';\nlet text = `${icon} WATCHDOG ${data.status}\\n\\n`;\nfor (const a of (data.alerts || [])) {\n  text += `${a.level === 'CRITICAL' ? '🔴' : '🟡'} ${a.msg}\\n`;\n}\ntext += `\\n📊 Estab: ${data.db?.total_estab || '?'} | Content: ${data.db?.total_content || '?'}`;\ntext += `\\n🌐 OpenRouter: ${data.openrouter}`;\ntext += `\\n🕐 ${data.timestamp}`;\n\ntry {\n  const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ chat_id: parseInt(chatId), text: text.substring(0, 4000) })\n  });\n  const result = await resp.json();\n  return [{ json: { telegram_sent: result.ok } }];\n} catch (err) {\n  return [{ json: { telegram_error: err.message } }];\n}"
+        },
+        "id": "wd-telegram",
+        "name": "Alerte Telegram",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [950, 150]
+      },
+      {
+        "parameters": {
           "operation": "executeQuery",
           "query": "UPDATE scrape_jobs SET status='error', error_log='watchdog: stuck >1h' WHERE status='running' AND started_at < NOW() - INTERVAL 1 HOUR"
         },
@@ -60,7 +71,7 @@
         "name": "Fix Stuck Jobs",
         "type": "n8n-nodes-base.mySql",
         "typeVersion": 2.4,
-        "position": [950, 250],
+        "position": [950, 350],
         "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
       },
       {
@@ -72,7 +83,7 @@
         "name": "Log Watchdog",
         "type": "n8n-nodes-base.mySql",
         "typeVersion": 2.4,
-        "position": [950, 450],
+        "position": [950, 550],
         "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
       }
     ],
@@ -80,7 +91,7 @@
       "Every 15min": { "main": [[ { "node": "Check BDD", "type": "main", "index": 0 }, { "node": "Check OpenRouter", "type": "main", "index": 0 } ]] },
       "Check BDD": { "main": [[ { "node": "Analyser Alertes", "type": "main", "index": 0 } ]] },
       "Check OpenRouter": { "main": [[ { "node": "Analyser Alertes", "type": "main", "index": 0 } ]] },
-      "Analyser Alertes": { "main": [[ { "node": "Fix Stuck Jobs", "type": "main", "index": 0 }, { "node": "Log Watchdog", "type": "main", "index": 0 } ]] }
+      "Analyser Alertes": { "main": [[ { "node": "Alerte Telegram", "type": "main", "index": 0 }, { "node": "Fix Stuck Jobs", "type": "main", "index": 0 }, { "node": "Log Watchdog", "type": "main", "index": 0 } ]] }
     },
     "settings": { "executionOrder": "v1" }
   }

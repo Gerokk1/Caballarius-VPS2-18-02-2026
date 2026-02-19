@@ -65,6 +65,17 @@
       },
       {
         "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const data = $input.first().json;\nconst token = $env.TELEGRAM_BOT_TOKEN;\nconst chatId = $env.TELEGRAM_CHAT_ID;\nif (!token || !chatId) return [{ json: { telegram: 'skipped - no token/chatId' } }];\n\nlet text = '';\nif (data.kimi_qc) {\n  const qc = data.kimi_qc;\n  const scoreEmoji = qc.quality_score >= 80 ? '🟢' : (qc.quality_score >= 50 ? '🟡' : '🔴');\n  text = `🔍 Controle Qualite\\n\\n`;\n  text += `${scoreEmoji} Score: ${qc.quality_score}/100\\n\\n`;\n  if (qc.issues && qc.issues.length > 0) {\n    text += `⚠️ Problemes detectes:\\n`;\n    for (const issue of qc.issues.slice(0, 5)) {\n      const icon = issue.severity === 'critical' ? '🔴' : (issue.severity === 'warning' ? '🟡' : 'ℹ️');\n      text += `${icon} [${issue.type}] ${issue.description}\\n`;\n    }\n    text += '\\n';\n  }\n  if (qc.recommendations) {\n    text += `💡 Recommandations:\\n${qc.recommendations.slice(0, 3).map(r => '  • ' + r).join('\\n')}\\n\\n`;\n  }\n  if (qc.summary) text += `📝 ${qc.summary}`;\n} else {\n  text = `⚠️ QC n8n - erreur: ${data.error || 'inconnu'}`;\n}\n\ntry {\n  const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ chat_id: parseInt(chatId), text: text.substring(0, 4000) })\n  });\n  const result = await resp.json();\n  return [{ json: { telegram_sent: result.ok } }];\n} catch (err) {\n  return [{ json: { telegram_error: err.message } }];\n}"
+        },
+        "id": "qc-telegram",
+        "name": "Envoyer Telegram QC",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [1000, 300]
+      },
+      {
+        "parameters": {
           "operation": "executeQuery",
           "query": "INSERT INTO scrape_jobs (job_type, target_type, target_id, status, started_at, completed_at, error_log)\nVALUES ('enrichment', 'locality', 0, 'done', NOW(), NOW(),\n  SUBSTRING('{{ JSON.stringify($json.kimi_qc || $json.error || {}).replace(/'/g, \"''\") }}', 1, 500))"
         },
@@ -72,7 +83,7 @@
         "name": "Log QC",
         "type": "n8n-nodes-base.mySql",
         "typeVersion": 2.4,
-        "position": [1000, 400],
+        "position": [1000, 500],
         "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
       }
     ],
@@ -81,7 +92,7 @@
       "Vue Ensemble": { "main": [[ { "node": "Kimi Analyse QC", "type": "main", "index": 0 } ]] },
       "Doublons Suspects": { "main": [[ { "node": "Kimi Analyse QC", "type": "main", "index": 0 } ]] },
       "Recents 24h": { "main": [[ { "node": "Kimi Analyse QC", "type": "main", "index": 0 } ]] },
-      "Kimi Analyse QC": { "main": [[ { "node": "Log QC", "type": "main", "index": 0 } ]] }
+      "Kimi Analyse QC": { "main": [[ { "node": "Envoyer Telegram QC", "type": "main", "index": 0 }, { "node": "Log QC", "type": "main", "index": 0 } ]] }
     },
     "settings": { "executionOrder": "v1" }
   }

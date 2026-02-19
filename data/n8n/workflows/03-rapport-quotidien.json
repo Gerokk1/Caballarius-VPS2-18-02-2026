@@ -19,7 +19,7 @@
       {
         "parameters": {
           "operation": "executeQuery",
-          "query": "SELECT\n  (SELECT COUNT(*) FROM countries WHERE active=1) AS pays,\n  (SELECT COUNT(*) FROM routes) AS routes,\n  (SELECT COUNT(*) FROM localities) AS localites,\n  (SELECT COUNT(*) FROM stages) AS etapes,\n  (SELECT COUNT(*) FROM establishments) AS etablissements,\n  (SELECT COUNT(*) FROM locality_content) AS contenus_localites,\n  (SELECT COUNT(DISTINCT locality_id) FROM locality_content) AS localites_enrichies,\n  (SELECT COUNT(*) FROM localities WHERE scrape_status='pending') AS loc_pending,\n  (SELECT COUNT(*) FROM localities WHERE scrape_status='done') AS loc_done,\n  (SELECT COUNT(*) FROM localities WHERE scrape_status='error') AS loc_error,\n  (SELECT COUNT(*) FROM establishments WHERE created_at > NOW() - INTERVAL 24 HOUR) AS new_estab_24h,\n  (SELECT COUNT(*) FROM locality_content WHERE created_at > NOW() - INTERVAL 24 HOUR) AS new_content_24h,\n  (SELECT COUNT(*) FROM scrape_jobs WHERE status='done' AND created_at > NOW() - INTERVAL 24 HOUR) AS jobs_ok_24h,\n  (SELECT COUNT(*) FROM scrape_jobs WHERE status='error' AND created_at > NOW() - INTERVAL 24 HOUR) AS jobs_err_24h,\n  (SELECT category, COUNT(*) AS n FROM establishments GROUP BY category ORDER BY n DESC LIMIT 1) AS top_category"
+          "query": "SELECT\n  (SELECT COUNT(*) FROM countries WHERE active=1) AS pays,\n  (SELECT COUNT(*) FROM routes) AS routes,\n  (SELECT COUNT(*) FROM localities) AS localites,\n  (SELECT COUNT(*) FROM stages) AS etapes,\n  (SELECT COUNT(*) FROM establishments) AS etablissements,\n  (SELECT COUNT(*) FROM locality_content) AS contenus_localites,\n  (SELECT COUNT(DISTINCT locality_id) FROM locality_content) AS localites_enrichies,\n  (SELECT COUNT(*) FROM localities WHERE scrape_status='pending') AS loc_pending,\n  (SELECT COUNT(*) FROM localities WHERE scrape_status='done') AS loc_done,\n  (SELECT COUNT(*) FROM localities WHERE scrape_status='error') AS loc_error,\n  (SELECT COUNT(*) FROM establishments WHERE created_at > NOW() - INTERVAL 24 HOUR) AS new_estab_24h,\n  (SELECT COUNT(*) FROM locality_content WHERE created_at > NOW() - INTERVAL 24 HOUR) AS new_content_24h,\n  (SELECT COUNT(*) FROM scrape_jobs WHERE status='done' AND created_at > NOW() - INTERVAL 24 HOUR) AS jobs_ok_24h,\n  (SELECT COUNT(*) FROM scrape_jobs WHERE status='error' AND created_at > NOW() - INTERVAL 24 HOUR) AS jobs_err_24h"
         },
         "id": "rpt-stats",
         "name": "Stats Completes",
@@ -53,6 +53,17 @@
       },
       {
         "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const data = $input.first().json;\nconst token = $env.TELEGRAM_BOT_TOKEN;\nconst chatId = $env.TELEGRAM_CHAT_ID;\nif (!token || !chatId) return [{ json: { telegram: 'skipped - no token/chatId' } }];\n\nlet text = '';\nif (data.report) {\n  const r = data.report;\n  text = `📊 ${r.title || 'Rapport Quotidien'}\\n\\n`;\n  if (r.sections) {\n    for (const s of r.sections) {\n      text += `${s.emoji || '▪️'} ${s.title}\\n${s.content}\\n\\n`;\n    }\n  }\n  if (r.kpi) {\n    text += `📈 Scrape: ${r.kpi.progress_scrape_pct || 0}% | Enrichi: ${r.kpi.progress_enrich_pct || 0}%\\n`;\n    text += `🏨 Etablissements: ${r.kpi.establishments_total || 0}\\n`;\n    text += `🚦 Sante: ${r.kpi.health || '?'}\\n\\n`;\n  }\n  if (r.next_steps) text += `🎯 Prochaines etapes:\\n${r.next_steps.map(s => '  • ' + s).join('\\n')}\\n\\n`;\n  if (r.one_liner) text += `💡 ${r.one_liner}`;\n} else {\n  text = `⚠️ Rapport n8n - erreur: ${data.error || 'inconnu'}`;\n}\n\ntry {\n  const resp = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json' },\n    body: JSON.stringify({ chat_id: parseInt(chatId), text: text.substring(0, 4000), parse_mode: 'HTML' })\n  });\n  const result = await resp.json();\n  return [{ json: { telegram_sent: result.ok, message_id: result.result?.message_id } }];\n} catch (err) {\n  return [{ json: { telegram_error: err.message } }];\n}"
+        },
+        "id": "rpt-telegram",
+        "name": "Envoyer Telegram",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [1000, 300]
+      },
+      {
+        "parameters": {
           "operation": "executeQuery",
           "query": "INSERT INTO scrape_jobs (job_type, target_type, target_id, status, started_at, completed_at, error_log)\nVALUES ('enrichment', 'locality', 0, 'done', NOW(), NOW(),\n  SUBSTRING('{{ JSON.stringify($json.report?.one_liner || $json.error || \"rapport genere\").replace(/'/g, \"''\") }}', 1, 500))"
         },
@@ -60,7 +71,7 @@
         "name": "Log Rapport",
         "type": "n8n-nodes-base.mySql",
         "typeVersion": 2.4,
-        "position": [1000, 400],
+        "position": [1000, 500],
         "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
       }
     ],
@@ -68,7 +79,7 @@
       "Cron 07h00": { "main": [[ { "node": "Stats Completes", "type": "main", "index": 0 }, { "node": "Repartition Categories", "type": "main", "index": 0 } ]] },
       "Stats Completes": { "main": [[ { "node": "Kimi Rapport", "type": "main", "index": 0 } ]] },
       "Repartition Categories": { "main": [[ { "node": "Kimi Rapport", "type": "main", "index": 0 } ]] },
-      "Kimi Rapport": { "main": [[ { "node": "Log Rapport", "type": "main", "index": 0 } ]] }
+      "Kimi Rapport": { "main": [[ { "node": "Envoyer Telegram", "type": "main", "index": 0 }, { "node": "Log Rapport", "type": "main", "index": 0 } ]] }
     },
     "settings": { "executionOrder": "v1" }
   }

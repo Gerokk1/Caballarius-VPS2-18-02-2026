@@ -31,7 +31,7 @@ services:
       - VEILLEUR_DB_USER=veilleur_user
       - VEILLEUR_DB_PASS=Ve!lleur2026_Cblrs
       # OpenRouter API
-      - OPENROUTER_API_KEY=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
+      - OPENROUTER_API_KEY=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
     networks:
       - openclaw-isolated
     cap_drop:

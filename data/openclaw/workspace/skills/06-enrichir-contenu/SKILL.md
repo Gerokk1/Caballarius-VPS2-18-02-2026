@@ -1,3 +1,29 @@
+---
+name: 06-enrichir-contenu
+description: Enrichir localites avec contenu multilingue via Kimi K2.5
+tools:
+  - exec
+trigger: cron
+schedule: "0 4 * * *"
+agent: batisseur
+db_user: batisseur_user
+tables_read:
+  - localities
+  - routes
+  - route_localities
+  - countries
+  - stages
+tables_write:
+  - locality_content
+  - scrape_jobs
+env:
+  - DB_HOST
+  - DB_USER=BATISSEUR_DB_USER
+  - DB_PASS=BATISSEUR_DB_PASS
+  - DB_NAME
+  - OPENROUTER_API_KEY
+---
+
 # Skill : Enrichir Contenu via Kimi K2.5
 
 ## Logique langues dynamiques

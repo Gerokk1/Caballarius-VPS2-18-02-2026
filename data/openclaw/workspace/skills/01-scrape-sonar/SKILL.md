@@ -1,3 +1,29 @@
+---
+name: 01-scrape-sonar
+description: Scrape establishments pour localites du Camino via Kimi K2.5
+tools:
+  - exec
+trigger: cron
+schedule: "0 3 * * *"
+agent: scribe
+db_user: scribe_user
+tables_read:
+  - localities
+  - routes
+  - route_localities
+  - countries
+tables_write:
+  - establishments
+  - establishment_sources
+  - scrape_jobs
+env:
+  - DB_HOST
+  - DB_USER=SCRIBE_DB_USER
+  - DB_PASS=SCRIBE_DB_PASS
+  - DB_NAME
+  - OPENROUTER_API_KEY
+---
+
 # Skill 01 : Scrape Establishments (2 phases)
 
 ## Phase 1 — Kimi K2.5 (ACTUELLE, gratuite)

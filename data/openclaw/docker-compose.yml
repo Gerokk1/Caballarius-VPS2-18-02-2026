@@ -14,6 +14,24 @@ services:
       - NODE_ENV=production
       - OPENCLAW_HOST=0.0.0.0
       - HOST=0.0.0.0
+      # DB access via host.docker.internal
+      - DB_HOST=host.docker.internal
+      - DB_PORT=3306
+      - DB_NAME=caballarius_staging
+      # Agent: Le Scribe (skill 01)
+      - SCRIBE_DB_USER=scribe_user
+      - SCRIBE_DB_PASS=Scr!be2026_Cblrs
+      # Agent: Le Batisseur (skill 06)
+      - BATISSEUR_DB_USER=batisseur_user
+      - BATISSEUR_DB_PASS=Bat!sseur2026_Cblrs
+      # Agent: Le Heraut (lecture seule)
+      - HERAUT_DB_USER=heraut_user
+      - HERAUT_DB_PASS=Her!aut2026_Cblrs
+      # Agent: Le Veilleur (monitoring)
+      - VEILLEUR_DB_USER=veilleur_user
+      - VEILLEUR_DB_PASS=Ve!lleur2026_Cblrs
+      # OpenRouter API
+      - OPENROUTER_API_KEY=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
     networks:
       - openclaw-isolated
     cap_drop:

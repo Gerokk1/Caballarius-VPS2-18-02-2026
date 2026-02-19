@@ -10,32 +10,20 @@ services:
       - /data/openclaw/workspace:/home/node/workspace
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    env_file:
+      - /data/openclaw/.env
     environment:
       - NODE_ENV=production
       - OPENCLAW_HOST=0.0.0.0
       - HOST=0.0.0.0
-      # DB access via host.docker.internal
       - DB_HOST=host.docker.internal
       - DB_PORT=3306
       - DB_NAME=caballarius_staging
-      # Agent: Le Scribe (skill 01)
       - SCRIBE_DB_USER=scribe_user
-      - SCRIBE_DB_PASS=Scr!be2026_Cblrs
-      # Agent: Le Batisseur (skill 06)
       - BATISSEUR_DB_USER=batisseur_user
-      - BATISSEUR_DB_PASS=Bat!sseur2026_Cblrs
-      # Agent: Le Heraut (lecture seule)
       - HERAUT_DB_USER=heraut_user
-      - HERAUT_DB_PASS=Her!aut2026_Cblrs
-      # Agent: Le Veilleur (monitoring)
       - VEILLEUR_DB_USER=veilleur_user
-      - VEILLEUR_DB_PASS=Ve!lleur2026_Cblrs
-      # AI Provider (google ou openrouter)
       - AI_PROVIDER=google
-      # Google AI Studio (Gemini 2.5 Flash, gratuit)
-      - GOOGLE_API_KEY=AIzaSyAOtFdQS37QBqViWpWi1dPU-35N34r71Ss
-      # OpenRouter (fallback)
-      - OPENROUTER_API_KEY=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
     networks:
       - openclaw-isolated
     cap_drop:

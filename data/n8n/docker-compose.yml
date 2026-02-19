@@ -5,6 +5,10 @@ services:
     restart: unless-stopped
     ports:
       - 127.0.0.1:5678:5678
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - /data/n8n/.env
     environment:
       - N8N_HOST=n8n.cblrs.net
       - N8N_PORT=5678

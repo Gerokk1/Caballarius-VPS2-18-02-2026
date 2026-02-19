@@ -1,82 +1,87 @@
-{
-  "name": "Caballarius - Watchdog",
-  "nodes": [
-    {
-      "name": "Cron 30min",
-      "type": "n8n-nodes-base.cron",
-      "position": [250, 300],
-      "parameters": {
-        "triggerTimes": { "item": [{ "mode": "everyX", "value": 30, "unit": "minutes" }] }
+[
+  {
+    "name": "Caballarius — 04 Watchdog",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              { "field": "minutes", "minutesInterval": 15 }
+            ]
+          }
+        },
+        "id": "wd-trigger",
+        "name": "Every 15min",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT\n  (SELECT MAX(completed_at) FROM scrape_jobs WHERE status='done') AS last_success,\n  (SELECT TIMESTAMPDIFF(MINUTE, MAX(completed_at), NOW()) FROM scrape_jobs WHERE status='done') AS minutes_since_last_success,\n  (SELECT COUNT(*) FROM scrape_jobs WHERE status='running' AND started_at < NOW() - INTERVAL 1 HOUR) AS stuck_jobs,\n  (SELECT COUNT(*) FROM scrape_jobs WHERE status='error' AND created_at > NOW() - INTERVAL 1 HOUR) AS errors_1h,\n  (SELECT COUNT(*) FROM scrape_jobs WHERE status='done' AND created_at > NOW() - INTERVAL 1 HOUR) AS done_1h,\n  (SELECT COUNT(*) FROM establishments) AS total_estab,\n  (SELECT COUNT(*) FROM locality_content) AS total_content"
+        },
+        "id": "wd-db-check",
+        "name": "Check BDD",
+        "type": "n8n-nodes-base.mySql",
+        "typeVersion": 2.4,
+        "position": [450, 250],
+        "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "https://openrouter.ai/api/v1/models",
+          "options": { "timeout": 10000 }
+        },
+        "id": "wd-openrouter",
+        "name": "Check OpenRouter",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [450, 450]
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const allItems = $input.all();\nconst dbCheck = allItems[0]?.json || {};\nconst openrouterOk = allItems[1]?.json?.data ? true : false;\n\nconst alerts = [];\nconst fixes = [];\n\n// Check activity\nconst minSinceLast = parseInt(dbCheck.minutes_since_last_success) || 9999;\nif (minSinceLast > 60) {\n  alerts.push({ level: 'CRITICAL', msg: `Aucun job termine depuis ${minSinceLast} min — skills probablement crashes` });\n}\nif (minSinceLast > 30 && minSinceLast <= 60) {\n  alerts.push({ level: 'WARNING', msg: `Derniere activite il y a ${minSinceLast} min` });\n}\n\n// Stuck jobs\nconst stuck = parseInt(dbCheck.stuck_jobs) || 0;\nif (stuck > 0) {\n  alerts.push({ level: 'WARNING', msg: `${stuck} job(s) stuck depuis >1h` });\n  fixes.push(`UPDATE scrape_jobs SET status='error', error_log='watchdog: stuck >1h' WHERE status='running' AND started_at < NOW() - INTERVAL 1 HOUR`);\n}\n\n// Error rate\nconst errors1h = parseInt(dbCheck.errors_1h) || 0;\nconst done1h = parseInt(dbCheck.done_1h) || 0;\nif (errors1h > 10 && errors1h > done1h) {\n  alerts.push({ level: 'CRITICAL', msg: `Taux d'erreur eleve: ${errors1h} erreurs vs ${done1h} succes (1h)` });\n}\n\n// OpenRouter\nif (!openrouterOk) {\n  alerts.push({ level: 'WARNING', msg: 'OpenRouter API ne repond pas' });\n}\n\nconst status = alerts.length === 0 ? 'OK' : (alerts.some(a => a.level === 'CRITICAL') ? 'CRITICAL' : 'WARNING');\n\nreturn [{ json: {\n  status,\n  alerts,\n  fixes,\n  openrouter: openrouterOk ? 'UP' : 'DOWN',\n  db: dbCheck,\n  timestamp: new Date().toISOString()\n} }];"
+        },
+        "id": "wd-analyze",
+        "name": "Analyser Alertes",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [700, 350]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE scrape_jobs SET status='error', error_log='watchdog: stuck >1h' WHERE status='running' AND started_at < NOW() - INTERVAL 1 HOUR"
+        },
+        "id": "wd-fix-stuck",
+        "name": "Fix Stuck Jobs",
+        "type": "n8n-nodes-base.mySql",
+        "typeVersion": 2.4,
+        "position": [950, 250],
+        "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO scrape_jobs (job_type, target_type, target_id, status, started_at, completed_at, error_log)\nVALUES ('enrichment', 'locality', 0, '{{ $json.status === \"OK\" ? \"done\" : \"error\" }}', NOW(), NOW(),\n  SUBSTRING('{{ $json.status }}: {{ ($json.alerts || []).map(a => a.msg).join(\" | \").replace(/'/g, \"''\") }}', 1, 500))"
+        },
+        "id": "wd-log",
+        "name": "Log Watchdog",
+        "type": "n8n-nodes-base.mySql",
+        "typeVersion": 2.4,
+        "position": [950, 450],
+        "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
       }
+    ],
+    "connections": {
+      "Every 15min": { "main": [[ { "node": "Check BDD", "type": "main", "index": 0 }, { "node": "Check OpenRouter", "type": "main", "index": 0 } ]] },
+      "Check BDD": { "main": [[ { "node": "Analyser Alertes", "type": "main", "index": 0 } ]] },
+      "Check OpenRouter": { "main": [[ { "node": "Analyser Alertes", "type": "main", "index": 0 } ]] },
+      "Analyser Alertes": { "main": [[ { "node": "Fix Stuck Jobs", "type": "main", "index": 0 }, { "node": "Log Watchdog", "type": "main", "index": 0 } ]] }
     },
-    {
-      "name": "Check OpenClaw",
-      "type": "n8n-nodes-base.executeCommand",
-      "position": [450, 200],
-      "parameters": {
-        "command": "docker ps --filter name=openclaw-bunker --format '{{.Status}}' | grep -q 'Up' && echo 'UP' || echo 'DOWN'"
-      }
-    },
-    {
-      "name": "Check Stuck Jobs",
-      "type": "n8n-nodes-base.mySql",
-      "position": [450, 400],
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT id, job_type, target_type, target_id, started_at FROM scrape_jobs WHERE status = 'running' AND started_at < NOW() - INTERVAL 1 HOUR"
-      }
-    },
-    {
-      "name": "Check Disk",
-      "type": "n8n-nodes-base.executeCommand",
-      "position": [450, 600],
-      "parameters": {
-        "command": "df -h /data | tail -1 | awk '{print $5}' | sed 's/%//'"
-      }
-    },
-    {
-      "name": "Check OpenRouter",
-      "type": "n8n-nodes-base.httpRequest",
-      "position": [450, 800],
-      "parameters": {
-        "method": "GET",
-        "url": "https://openrouter.ai/api/v1/models",
-        "options": { "timeout": 5000 }
-      }
-    },
-    {
-      "name": "Process Alerts",
-      "type": "n8n-nodes-base.code",
-      "position": [700, 400],
-      "parameters": {
-        "jsCode": "const alerts = [];\n\n// OpenClaw down?\nconst clawStatus = $node['Check OpenClaw'].json.stdout?.trim();\nif (clawStatus !== 'UP') alerts.push('CRITICAL: OpenClaw container DOWN!');\n\n// Stuck jobs?\nconst stuckJobs = $node['Check Stuck Jobs'].json;\nif (stuckJobs && stuckJobs.length > 0) {\n  for (const j of stuckJobs) alerts.push(`WARNING: Job #${j.id} (${j.job_type}) stuck since ${j.started_at}`);\n}\n\n// Disk full?\nconst diskUsage = parseInt($node['Check Disk'].json.stdout?.trim() || '0');\nif (diskUsage > 80) alerts.push(`WARNING: Disk usage ${diskUsage}%`);\nif (diskUsage > 95) alerts.push(`CRITICAL: Disk almost full ${diskUsage}%!`);\n\n// OpenRouter down?\nconst orStatus = $node['Check OpenRouter'].json?.statusCode;\nif (orStatus !== 200) alerts.push('WARNING: OpenRouter API not responding');\n\nif (alerts.length === 0) return [{json: {status: 'OK', message: 'All systems nominal'}}];\nreturn alerts.map(a => ({json: {status: 'ALERT', message: a}}));"
-      }
-    },
-    {
-      "name": "Fix Stuck Jobs",
-      "type": "n8n-nodes-base.mySql",
-      "position": [700, 600],
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "UPDATE scrape_jobs SET status = 'error', error_log = 'Timeout: stuck > 1 hour, marked by watchdog' WHERE status = 'running' AND started_at < NOW() - INTERVAL 1 HOUR"
-      }
-    },
-    {
-      "name": "Alert Telegram",
-      "type": "n8n-nodes-base.telegram",
-      "position": [900, 400],
-      "parameters": {
-        "chatId": "{{$credentials.telegramChatId}}",
-        "text": "ðŸš¨ WATCHDOG ALERT\n{{ $json.message }}"
-      }
-    }
-  ],
-  "connections": {
-    "Cron 30min": { "main": [[ { "node": "Check OpenClaw" }, { "node": "Check Stuck Jobs" }, { "node": "Check Disk" }, { "node": "Check OpenRouter" } ]] },
-    "Check OpenClaw": { "main": [[ { "node": "Process Alerts" } ]] },
-    "Check Stuck Jobs": { "main": [[ { "node": "Process Alerts" }, { "node": "Fix Stuck Jobs" } ]] },
-    "Check Disk": { "main": [[ { "node": "Process Alerts" } ]] },
-    "Check OpenRouter": { "main": [[ { "node": "Process Alerts" } ]] },
-    "Process Alerts": { "main": [[ { "node": "Alert Telegram" } ]] }
+    "settings": { "executionOrder": "v1" }
   }
-}
+]

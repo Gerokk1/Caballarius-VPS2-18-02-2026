@@ -1,71 +1,88 @@
-{
-  "name": "Caballarius - Controle qualite",
-  "nodes": [
-    {
-      "name": "Cron 2h",
-      "type": "n8n-nodes-base.cron",
-      "position": [250, 300],
-      "parameters": {
-        "triggerTimes": { "item": [{ "mode": "everyX", "value": 2, "unit": "hours" }] }
-      }
-    },
-    {
-      "name": "Query Recent Establishments",
-      "type": "n8n-nodes-base.mySql",
-      "position": [450, 300],
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT e.id, e.name, e.category, e.lat, e.lng, e.google_rating, e.price_level, e.address, l.name AS locality, l.lat AS loc_lat, l.lng AS loc_lng, (6371 * ACOS(COS(RADIANS(e.lat)) * COS(RADIANS(l.lat)) * COS(RADIANS(l.lng) - RADIANS(e.lng)) + SIN(RADIANS(e.lat)) * SIN(RADIANS(l.lat)))) AS distance_km FROM establishments e JOIN localities l ON e.locality_id = l.id WHERE e.created_at > NOW() - INTERVAL 2 HOUR ORDER BY e.created_at DESC LIMIT 50"
-      }
-    },
-    {
-      "name": "Check Duplicates",
-      "type": "n8n-nodes-base.mySql",
-      "position": [450, 500],
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT e1.id AS id1, e2.id AS id2, e1.name, e1.address FROM establishments e1 JOIN establishments e2 ON e1.name = e2.name AND e1.address = e2.address AND e1.id < e2.id WHERE e1.created_at > NOW() - INTERVAL 24 HOUR"
-      }
-    },
-    {
-      "name": "Filter Suspects",
-      "type": "n8n-nodes-base.code",
-      "position": [650, 300],
-      "parameters": {
-        "jsCode": "// Filter establishments with issues:\n// - distance_km > 1 (wrong location)\n// - name empty or 'Unknown'\n// - price_level suspicious for category\nconst suspects = [];\nfor (const item of $input.all()) {\n  const d = item.json;\n  if (d.distance_km > 1) suspects.push({...d, issue: 'wrong_location', severity: 'critical'});\n  if (!d.name || d.name === 'Unknown') suspects.push({...d, issue: 'missing_data', severity: 'warning'});\n  if (d.category === 'albergue' && d.price_level >= 4) suspects.push({...d, issue: 'incoherent_price', severity: 'warning'});\n  if (d.category === 'hotel' && d.price_level === 0) suspects.push({...d, issue: 'incoherent_price', severity: 'info'});\n}\nreturn suspects.map(s => ({json: s}));"
-      }
-    },
-    {
-      "name": "Ask Kimi K2.5",
-      "type": "n8n-nodes-base.httpRequest",
-      "position": [850, 300],
-      "parameters": {
-        "method": "POST",
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": {
-          "Authorization": "Bearer {{$credentials.openrouterApiKey}}",
-          "Content-Type": "application/json"
+[
+  {
+    "name": "Caballarius — 02 Controle Qualite",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              { "field": "cronExpression", "expression": "0 6 * * *" }
+            ]
+          }
         },
-        "body": {
-          "model": "moonshotai/kimi-k2.5",
-          "messages": [{"role": "user", "content": "Analyse ces etablissements suspects du Camino de Santiago. Pour chacun, reponds OK ou PROBLEME avec une explication courte en francais:\n{{ JSON.stringify($json) }}"}]
-        }
+        "id": "qc-trigger",
+        "name": "Cron 06h00",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT\n  (SELECT COUNT(*) FROM establishments) AS total_estab,\n  (SELECT COUNT(*) FROM establishments WHERE created_at > NOW() - INTERVAL 24 HOUR) AS new_24h,\n  (SELECT COUNT(*) FROM establishments WHERE google_rating IS NULL) AS no_rating,\n  (SELECT COUNT(*) FROM establishments WHERE phone IS NULL AND email IS NULL AND website IS NULL) AS no_contact,\n  (SELECT COUNT(DISTINCT category) FROM establishments) AS nb_categories"
+        },
+        "id": "qc-overview",
+        "name": "Vue Ensemble",
+        "type": "n8n-nodes-base.mySql",
+        "typeVersion": 2.4,
+        "position": [450, 200],
+        "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT name, category, COUNT(*) AS nb FROM establishments GROUP BY name, category HAVING COUNT(*) > 3 ORDER BY nb DESC LIMIT 20"
+        },
+        "id": "qc-dupes",
+        "name": "Doublons Suspects",
+        "type": "n8n-nodes-base.mySql",
+        "typeVersion": 2.4,
+        "position": [450, 400],
+        "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT e.id, e.name, e.category, e.address, l.name AS locality\nFROM establishments e\nJOIN localities l ON e.locality_id = l.id\nWHERE e.created_at > NOW() - INTERVAL 24 HOUR\nORDER BY e.id DESC LIMIT 25"
+        },
+        "id": "qc-recent",
+        "name": "Recents 24h",
+        "type": "n8n-nodes-base.mySql",
+        "typeVersion": 2.4,
+        "position": [450, 600],
+        "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const allItems = $input.all();\nconst overview = allItems[0]?.json || {};\nconst dupes = allItems.slice(1).filter(i => i.json.nb).map(i => i.json);\nconst recent = allItems.filter(i => i.json.locality).map(i => i.json);\n\nconst apiKey = $env.OPENROUTER_API_KEY;\nif (!apiKey) return [{ json: { error: 'OPENROUTER_API_KEY manquant' } }];\n\nconst systemPrompt = `Tu es Kimi, CONTROLEUR QUALITE du projet Caballarius.\nTu analyses les etablissements scrapes sur les chemins de pelerinage et detectes :\n- Hallucinations LLM (etablissements inventes, noms generiques repetes)\n- Doublons (meme nom dans trop de localites = fake)\n- Categories douteuses\n- Donnees manquantes critiques\n- Noms en mauvaise langue pour le pays\nSois strict. Mieux vaut trop de warnings que rater un probleme.\nReponds TOUJOURS en JSON valide.`;\n\nconst userPrompt = `CONTROLE QUALITE — ${new Date().toISOString().split('T')[0]}\n\nSTATS: ${JSON.stringify(overview)}\nDOUBLONS (>3 occurrences): ${JSON.stringify(dupes.slice(0, 10))}\nRECENTS: ${JSON.stringify(recent.slice(0, 15))}\n\nReponds:\n{\"quality_score\": 0-100, \"issues\": [{\"type\": \"duplicate|hallucination|missing_data|wrong_category|wrong_language\", \"severity\": \"info|warning|critical\", \"description\": \"...\", \"names\": []}], \"recommendations\": [\"...\"], \"summary\": \"2-3 phrases\"}`;\n\ntry {\n  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': 'https://cblrs.net', 'X-Title': 'Caballarius-n8n-qc' },\n    body: JSON.stringify({ model: 'moonshotai/kimi-k2.5', messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], response_format: { type: 'json_object' }, temperature: 0.2, max_tokens: 3000 })\n  });\n  const data = await response.json();\n  const analysis = JSON.parse(data.choices[0].message.content);\n  return [{ json: { kimi_qc: analysis, overview, timestamp: new Date().toISOString() } }];\n} catch (err) {\n  return [{ json: { error: err.message, overview } }];\n}"
+        },
+        "id": "qc-kimi",
+        "name": "Kimi Analyse QC",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [750, 400]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO scrape_jobs (job_type, target_type, target_id, status, started_at, completed_at, error_log)\nVALUES ('enrichment', 'locality', 0, 'done', NOW(), NOW(),\n  SUBSTRING('{{ JSON.stringify($json.kimi_qc || $json.error || {}).replace(/'/g, \"''\") }}', 1, 500))"
+        },
+        "id": "qc-log",
+        "name": "Log QC",
+        "type": "n8n-nodes-base.mySql",
+        "typeVersion": 2.4,
+        "position": [1000, 400],
+        "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
       }
+    ],
+    "connections": {
+      "Cron 06h00": { "main": [[ { "node": "Vue Ensemble", "type": "main", "index": 0 }, { "node": "Doublons Suspects", "type": "main", "index": 0 }, { "node": "Recents 24h", "type": "main", "index": 0 } ]] },
+      "Vue Ensemble": { "main": [[ { "node": "Kimi Analyse QC", "type": "main", "index": 0 } ]] },
+      "Doublons Suspects": { "main": [[ { "node": "Kimi Analyse QC", "type": "main", "index": 0 } ]] },
+      "Recents 24h": { "main": [[ { "node": "Kimi Analyse QC", "type": "main", "index": 0 } ]] },
+      "Kimi Analyse QC": { "main": [[ { "node": "Log QC", "type": "main", "index": 0 } ]] }
     },
-    {
-      "name": "Insert Quality Checks",
-      "type": "n8n-nodes-base.mySql",
-      "position": [1050, 300],
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "INSERT INTO quality_checks (check_type, establishment_id, severity, description) VALUES ('{{ $json.issue }}', {{ $json.id }}, '{{ $json.severity }}', '{{ $json.kimi_analysis }}')"
-      }
-    }
-  ],
-  "connections": {
-    "Cron 2h": { "main": [[ { "node": "Query Recent Establishments" }, { "node": "Check Duplicates" } ]] },
-    "Query Recent Establishments": { "main": [[ { "node": "Filter Suspects" } ]] },
-    "Filter Suspects": { "main": [[ { "node": "Ask Kimi K2.5" } ]] },
-    "Ask Kimi K2.5": { "main": [[ { "node": "Insert Quality Checks" } ]] }
+    "settings": { "executionOrder": "v1" }
   }
-}
+]

@@ -1,62 +1,75 @@
-{
-  "name": "Caballarius - Rapport quotidien",
-  "nodes": [
-    {
-      "name": "Cron 20h",
-      "type": "n8n-nodes-base.cron",
-      "position": [250, 300],
-      "parameters": {
-        "triggerTimes": { "item": [{ "hour": 20, "minute": 0 }] }
-      }
-    },
-    {
-      "name": "Stats Today",
-      "type": "n8n-nodes-base.mySql",
-      "position": [450, 300],
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT (SELECT COUNT(*) FROM establishments WHERE DATE(created_at) = CURDATE()) AS new_today, (SELECT COUNT(*) FROM establishments) AS total_establishments, (SELECT COUNT(*) FROM establishments WHERE scrape_status='scraped') AS scraped, (SELECT COUNT(*) FROM establishments WHERE scrape_status='enriched') AS enriched, (SELECT COUNT(*) FROM establishments WHERE scrape_status='site_generated') AS sites_generated, (SELECT COUNT(*) FROM establishments WHERE scrape_status='synced') AS synced, (SELECT COUNT(*) FROM localities WHERE scrape_status='done') AS localities_done, (SELECT COUNT(*) FROM localities WHERE scrape_status='pending') AS localities_pending, (SELECT COUNT(*) FROM scrape_jobs WHERE status='error' AND DATE(created_at) = CURDATE()) AS errors_today, (SELECT COUNT(*) FROM quality_checks WHERE DATE(created_at) = CURDATE()) AS qc_today, (SELECT COUNT(*) FROM quality_checks WHERE severity='critical' AND auto_resolved=FALSE) AS qc_critical_open, (SELECT COUNT(*) FROM pro_sites WHERE is_live=TRUE) AS sites_live"
-      }
-    },
-    {
-      "name": "Top Localities",
-      "type": "n8n-nodes-base.mySql",
-      "position": [450, 500],
-      "parameters": {
-        "operation": "executeQuery",
-        "query": "SELECT l.name, c.name_fr AS country, COUNT(e.id) AS nb_establishments FROM localities l JOIN regions r ON l.region_id = r.id JOIN countries c ON r.country_id = c.id LEFT JOIN establishments e ON e.locality_id = l.id GROUP BY l.id ORDER BY nb_establishments DESC LIMIT 5"
-      }
-    },
-    {
-      "name": "Generate Report (Kimi)",
-      "type": "n8n-nodes-base.httpRequest",
-      "position": [700, 300],
-      "parameters": {
-        "method": "POST",
-        "url": "https://openrouter.ai/api/v1/chat/completions",
-        "headers": {
-          "Authorization": "Bearer {{$credentials.openrouterApiKey}}",
-          "Content-Type": "application/json"
+[
+  {
+    "name": "Caballarius — 03 Rapport Quotidien",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              { "field": "cronExpression", "expression": "0 7 * * *" }
+            ]
+          }
         },
-        "body": {
-          "model": "moonshotai/kimi-k2.5",
-          "messages": [{"role": "user", "content": "Redige un rapport quotidien Caballarius en francais. Concis, professionnel, avec emojis pour les chiffres cles. Voici les stats:\n{{ JSON.stringify($json) }}\nTop localites:\n{{ JSON.stringify($node['Top Localities'].json) }}"}]
-        }
+        "id": "rpt-trigger",
+        "name": "Cron 07h00",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [250, 300]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT\n  (SELECT COUNT(*) FROM countries WHERE active=1) AS pays,\n  (SELECT COUNT(*) FROM routes) AS routes,\n  (SELECT COUNT(*) FROM localities) AS localites,\n  (SELECT COUNT(*) FROM stages) AS etapes,\n  (SELECT COUNT(*) FROM establishments) AS etablissements,\n  (SELECT COUNT(*) FROM locality_content) AS contenus_localites,\n  (SELECT COUNT(DISTINCT locality_id) FROM locality_content) AS localites_enrichies,\n  (SELECT COUNT(*) FROM localities WHERE scrape_status='pending') AS loc_pending,\n  (SELECT COUNT(*) FROM localities WHERE scrape_status='done') AS loc_done,\n  (SELECT COUNT(*) FROM localities WHERE scrape_status='error') AS loc_error,\n  (SELECT COUNT(*) FROM establishments WHERE created_at > NOW() - INTERVAL 24 HOUR) AS new_estab_24h,\n  (SELECT COUNT(*) FROM locality_content WHERE created_at > NOW() - INTERVAL 24 HOUR) AS new_content_24h,\n  (SELECT COUNT(*) FROM scrape_jobs WHERE status='done' AND created_at > NOW() - INTERVAL 24 HOUR) AS jobs_ok_24h,\n  (SELECT COUNT(*) FROM scrape_jobs WHERE status='error' AND created_at > NOW() - INTERVAL 24 HOUR) AS jobs_err_24h,\n  (SELECT category, COUNT(*) AS n FROM establishments GROUP BY category ORDER BY n DESC LIMIT 1) AS top_category"
+        },
+        "id": "rpt-stats",
+        "name": "Stats Completes",
+        "type": "n8n-nodes-base.mySql",
+        "typeVersion": 2.4,
+        "position": [450, 300],
+        "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT category, COUNT(*) AS nb FROM establishments GROUP BY category ORDER BY nb DESC LIMIT 10"
+        },
+        "id": "rpt-categories",
+        "name": "Repartition Categories",
+        "type": "n8n-nodes-base.mySql",
+        "typeVersion": 2.4,
+        "position": [450, 500],
+        "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
+      },
+      {
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const allItems = $input.all();\nconst stats = allItems[0]?.json || {};\nconst categories = allItems.filter(i => i.json.category).map(i => i.json);\n\nconst apiKey = $env.OPENROUTER_API_KEY;\nif (!apiKey) return [{ json: { error: 'OPENROUTER_API_KEY manquant' } }];\n\nconst systemPrompt = `Tu es Kimi, cerveau IA du projet Caballarius.\nTu rediges le RAPPORT QUOTIDIEN. Style : concis, professionnel, en francais.\nUtilise des emojis pour les KPI.\nObjectifs de reference :\n- 2356 localites a scraper (etablissements)\n- 2356 localites a enrichir (descriptions multilingues)\n- Cible finale : 20 000+ etablissements, 15 000 sites pros\nReponds TOUJOURS en JSON valide.`;\n\nconst userPrompt = `Genere le rapport quotidien du ${new Date().toISOString().split('T')[0]}.\n\nSTATS: ${JSON.stringify(stats)}\nCATEGORIES: ${JSON.stringify(categories)}\n\nReponds:\n{\"title\": \"Rapport Caballarius — JJ/MM\", \"sections\": [{\"emoji\": \"...\", \"title\": \"...\", \"content\": \"...\"}], \"kpi\": {\"progress_scrape_pct\": 0-100, \"progress_enrich_pct\": 0-100, \"establishments_total\": N, \"health\": \"green|yellow|red\"}, \"next_steps\": [\"...\"], \"one_liner\": \"Resume en 1 phrase\"}`;\n\ntry {\n  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {\n    method: 'POST',\n    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}`, 'HTTP-Referer': 'https://cblrs.net', 'X-Title': 'Caballarius-n8n-rapport' },\n    body: JSON.stringify({ model: 'moonshotai/kimi-k2.5', messages: [{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], response_format: { type: 'json_object' }, temperature: 0.5, max_tokens: 3000 })\n  });\n  const data = await response.json();\n  const report = JSON.parse(data.choices[0].message.content);\n  return [{ json: { report, stats, timestamp: new Date().toISOString() } }];\n} catch (err) {\n  return [{ json: { error: err.message, stats } }];\n}"
+        },
+        "id": "rpt-kimi",
+        "name": "Kimi Rapport",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [750, 400]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO scrape_jobs (job_type, target_type, target_id, status, started_at, completed_at, error_log)\nVALUES ('enrichment', 'locality', 0, 'done', NOW(), NOW(),\n  SUBSTRING('{{ JSON.stringify($json.report?.one_liner || $json.error || \"rapport genere\").replace(/'/g, \"''\") }}', 1, 500))"
+        },
+        "id": "rpt-log",
+        "name": "Log Rapport",
+        "type": "n8n-nodes-base.mySql",
+        "typeVersion": 2.4,
+        "position": [1000, 400],
+        "credentials": { "mySql": { "id": "create-in-ui", "name": "MariaDB Staging" } }
       }
+    ],
+    "connections": {
+      "Cron 07h00": { "main": [[ { "node": "Stats Completes", "type": "main", "index": 0 }, { "node": "Repartition Categories", "type": "main", "index": 0 } ]] },
+      "Stats Completes": { "main": [[ { "node": "Kimi Rapport", "type": "main", "index": 0 } ]] },
+      "Repartition Categories": { "main": [[ { "node": "Kimi Rapport", "type": "main", "index": 0 } ]] },
+      "Kimi Rapport": { "main": [[ { "node": "Log Rapport", "type": "main", "index": 0 } ]] }
     },
-    {
-      "name": "Send Telegram",
-      "type": "n8n-nodes-base.telegram",
-      "position": [900, 300],
-      "parameters": {
-        "chatId": "{{$credentials.telegramChatId}}",
-        "text": "{{ $json.choices[0].message.content }}"
-      }
-    }
-  ],
-  "connections": {
-    "Cron 20h": { "main": [[ { "node": "Stats Today" }, { "node": "Top Localities" } ]] },
-    "Stats Today": { "main": [[ { "node": "Generate Report (Kimi)" } ]] },
-    "Generate Report (Kimi)": { "main": [[ { "node": "Send Telegram" } ]] }
+    "settings": { "executionOrder": "v1" }
   }
-}
+]

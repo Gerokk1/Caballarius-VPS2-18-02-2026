@@ -30,7 +30,7 @@ const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY || '';
 const GOOGLE_API_KEY = process.env.GOOGLE_API_KEY || '';
 const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
 const OPENROUTER_MODEL = 'moonshotai/kimi-k2.5';
-const GOOGLE_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${GOOGLE_API_KEY}`;
+const GOOGLE_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GOOGLE_API_KEY}`;
 
 const RATE_LIMIT_MS = 1500;
 const MAX_RETRIES = 3;

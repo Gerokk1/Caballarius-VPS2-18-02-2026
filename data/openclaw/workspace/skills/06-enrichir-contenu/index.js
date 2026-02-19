@@ -65,13 +65,55 @@ ${loc.stages ? 'ÉTAPES : ' + loc.stages : ''}
 
 Réponds UNIQUEMENT en JSON valide (pas de markdown, pas de commentaires) :
 {
-  "description": "Description 200-400 mots pour pèlerins. Histoire, patrimoine, intérêt, ambiance du lieu.",
-  "description_short": "Résumé 1-2 phrases, max 280 caractères.",
+  "description": "Description 150-250 mots pour pèlerins. Histoire, patrimoine, intérêt.",
+  "description_short": "Résumé 1 phrase, max 200 caractères.",
   "highlights": ["Point fort 1", "Point fort 2", "Point fort 3"],
-  "seo_title": "Titre SEO max 70 car, incluant le nom et pèlerinage",
-  "seo_description": "Meta description SEO max 155 car",
-  "practical_info": "Infos pratiques pèlerins : accès, services, eau, hébergement, conseils."
+  "seo_title": "Titre SEO max 60 car",
+  "seo_description": "Meta description max 150 car",
+  "practical_info": "Infos pratiques courtes : accès, services, hébergement."
 }`;
+}
+
+function repairJSON(raw) {
+  // Try direct parse first
+  try { return JSON.parse(raw); } catch {}
+
+  // Strip markdown fences if present
+  let s = raw.replace(/^```json?\s*/i, '').replace(/```\s*$/, '').trim();
+  try { return JSON.parse(s); } catch {}
+
+  // Truncated JSON: close open strings and braces
+  // Count open braces/brackets
+  let inStr = false, escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (escaped) { escaped = false; continue; }
+    if (c === '\\') { escaped = true; continue; }
+    if (c === '"') inStr = !inStr;
+  }
+  // If inside a string, close it
+  if (inStr) s += '"';
+  // Close any open arrays/objects
+  const opens = { '{': 0, '[': 0 };
+  inStr = false; escaped = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (escaped) { escaped = false; continue; }
+    if (c === '\\') { escaped = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === '{') opens['{']++;
+    if (c === '}') opens['{']--;
+    if (c === '[') opens['[']++;
+    if (c === ']') opens['[']--;
+  }
+  // Remove trailing comma before closing
+  s = s.replace(/,\s*$/, '');
+  for (let i = 0; i < opens['[']; i++) s += ']';
+  for (let i = 0; i < opens['{']; i++) s += '}';
+  try { return JSON.parse(s); } catch {}
+
+  throw new Error(`JSON repair failed (len=${raw.length})`);
 }
 
 async function callKimi(prompt, retries = 2) {
@@ -90,7 +132,7 @@ async function callKimi(prompt, retries = 2) {
           messages: [{ role: 'user', content: prompt }],
           response_format: { type: 'json_object' },
           temperature: 0.7,
-          max_tokens: 2000
+          max_tokens: 4000
         })
       });
 
@@ -108,7 +150,7 @@ async function callKimi(prompt, retries = 2) {
 
       const data = await res.json();
       const content = data.choices[0].message.content;
-      return JSON.parse(content);
+      return repairJSON(content);
     } catch (err) {
       if (attempt === retries) throw err;
       log(`Retry ${attempt + 1}: ${err.message}`);

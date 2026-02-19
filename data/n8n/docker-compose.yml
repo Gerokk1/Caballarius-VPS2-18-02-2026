@@ -17,7 +17,7 @@ services:
       - WEBHOOK_URL=https://n8n.cblrs.net/
       - GENERIC_TIMEZONE=Europe/Paris
       - N8N_SECURE_COOKIE=false
-      - N8N_RUNNERS_ENABLED=false
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
     volumes:
       - /data/n8n/data:/home/node/.n8n
     user: 1000:1000

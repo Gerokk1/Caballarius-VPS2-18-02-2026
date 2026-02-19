@@ -1,9 +1,9 @@
 # ETAT ACTUEL DU PROJET — VPS2
 
-**Derniere mise a jour : 2026-02-18 20:05**
+**Derniere mise a jour : 2026-02-19 07:30**
 
 ## Resume
-VPS2 (cblrs.net) PLEINEMENT OPERATIONNEL. HTTPS actif. OpenClaw bunker mode + securite audit 25/25. BDD staging 14 tables, 38 pays, 305 routes, 2356 localites, 1795 etapes, langues dynamiques. TOUTES les 305 routes ont des etapes (0 manquante). 8 skills custom (squelettes). 4 workflows n8n (squelettes JSON).
+VPS2 (cblrs.net) PLEINEMENT OPERATIONNEL. HTTPS actif. OpenClaw bunker mode + securite audit 25/25. BDD staging 14 tables, 38 pays, 305 routes, 2356 localites, 1795 etapes, langues dynamiques. TOUTES les 305 routes ont des etapes (0 manquante). 2 skills actifs (01 + 06) tournent avec Kimi K2.5 via OpenRouter. 4 workflows n8n ACTIFS avec Kimi K2.5 + Telegram. Bot Telegram connecte.
 
 ## Ce qui fonctionne
 - [x] https://cblrs.net → 200 (SSL, redirect HTTP→HTTPS)
@@ -14,11 +14,12 @@ VPS2 (cblrs.net) PLEINEMENT OPERATIONNEL. HTTPS actif. OpenClaw bunker mode + se
 - [x] Disque 250 Go monte (/data, 233 Go libres)
 - [x] Securite : UFW, Fail2Ban, SSH durci, unattended upgrades
 - [x] Stack : Nginx 1.24, PHP 8.3, MariaDB 10.11, Redis, Node.js 20, Docker 29, Certbot 2.9
-- [x] n8n Docker UP
+- [x] n8n Docker UP (v2.8.3) — 4 workflows ACTIFS
 - [x] Structure /data (sites/, templates/, n8n/, backups/)
 - [x] Repo GitHub (Gerokk1/Caballarius-VPS2-18-02-2026)
 - [x] Ports 80/443/5678 ouverts (Infomaniak Security Group)
 - [x] DNS *.cblrs.net → 83.228.211.132
+- [x] Telegram bot @caballarius_vps2_bot connecte (chat_id: 8585838701)
 
 ## OpenClaw (Bunker Mode)
 - [x] Container openclaw-bunker UP (alpine/openclaw:latest v2026.2.17)
@@ -36,10 +37,10 @@ VPS2 (cblrs.net) PLEINEMENT OPERATIONNEL. HTTPS actif. OpenClaw bunker mode + se
 - [x] Audit securite 25/25 (cap_drop ALL, no-new-privileges, chmod 600)
 
 ## BDD Staging (MariaDB caballarius_staging)
-### Schema : 14 tables
-countries, regions, routes, stages, localities, route_localities, establishments, establishment_photos, establishment_content, establishment_prices, establishment_sources, pro_sites, scrape_jobs, quality_checks
+### Schema : 15 tables
+countries, regions, routes, stages, localities, route_localities, establishments, establishment_photos, establishment_content, establishment_prices, establishment_sources, locality_content, pro_sites, scrape_jobs, quality_checks
 
-### Donnees actuelles
+### Donnees actuelles (2026-02-19 07h)
 | Table | Rows | Notes |
 |-------|------|-------|
 | countries | 38 | Toute l'Europe, colonne languages JSON, priorites 1-38 |
@@ -48,16 +49,20 @@ countries, regions, routes, stages, localities, route_localities, establishments
 | localities | 2356 | Seeders VPS1 (778) + GPX/KML import (1578) |
 | stages | 1795 | 305/305 routes couvertes, km + d+/d- + heures |
 | route_localities | 2830 | Liens route-localite avec order_on_route |
-| establishments | 0 | A scraper (objectif 20-25K) |
+| establishments | ~109 | Skill 01 en cours (Kimi K2.5, 8 localites scrapees) |
+| locality_content | ~47 | Skill 06 en cours (Kimi K2.5, 17 localites enrichies) |
 | Autres tables | 0 | Se rempliront au fil du pipeline |
 
 ### Modifications recentes
 - establishment_content.lang = VARCHAR(5) (etait ENUM, supporte toutes langues ISO 639-1)
 - countries.languages = JSON (langues officielles par pays, ex: CH=["de","fr","it","rm"])
+- locality_content table CREEE (session 11) — descriptions multilingues par localite
+- establishments.source ENUM etendu avec 'sonar_pro'
+- UNIQUE KEY (name, locality_id) sur establishments
 
 ### Users BDD
 - cblrs_user : full privileges (voir CREDENTIALS/)
-- staging_user : SELECT/INSERT/UPDATE (voir CREDENTIALS/)
+- staging_user : SELECT/INSERT/UPDATE depuis 172.% (Docker n8n) + localhost
 
 ### Sources de donnees
 - caminosantiago.org = SOURCE MASTER (305 routes KML/KMZ/GPX, 1599 localites geocodees)
@@ -75,25 +80,44 @@ countries, regions, routes, stages, localities, route_localities, establishments
 
 ## Skills OpenClaw (8 custom)
 - [x] 8 skills dans /data/openclaw/workspace/skills/ (16 fichiers)
-- Statut : SQUELETTES (fonctions vides avec TODO)
-- 01-scrape-google : Google Places API, 17 categories, rayon 1km
-- 02-scrape-facebook : Pages FB, photos, avis
-- 03-scrape-instagram : Photos geolocalisees, hashtags camino
-- 04-scrape-tourisme : Offices tourisme, Wikipedia, patrimoine
-- 05-scrape-forums : Gronze, CaminoWays, Reddit, avis pelerins
-- 06-enrichir-contenu : Kimi K2.5, langues DYNAMIQUES (locales+fr+en), 3 profils
-- 07-generer-site : Template caballarius-v1, deploy /data/sites/
-- 08-sync-vps1 : API push vers caballarius.eu, HTTPS, retries
-- Doc : BRAIN/CLAW/skills.md
+- [x] package.json workspace avec mysql2
+
+### Statut skills
+| Skill | Statut | Notes |
+|-------|--------|-------|
+| 01-scrape-sonar | ACTIF (nohup) | Adapte Kimi K2.5 via OpenRouter, 2 passes (hebergement+resto, services+patrimoine), 32 categories, batch 20 |
+| 02-scrape-facebook | SQUELETTE | Pages FB, photos, avis |
+| 03-scrape-instagram | SQUELETTE | Photos geolocalisees, hashtags camino |
+| 04-scrape-tourisme | SQUELETTE | Offices tourisme, Wikipedia, patrimoine |
+| 05-scrape-forums | SQUELETTE | Gronze, CaminoWays, Reddit |
+| 06-enrichir-contenu | ACTIF (nohup) | Kimi K2.5, langues dynamiques (locales+fr+en), repairJSON(), batch 50, table locality_content |
+| 07-generer-site | SQUELETTE | Template caballarius-v1, deploy /data/sites/ |
+| 08-sync-vps1 | SQUELETTE | API push vers caballarius.eu |
+
+- Phase 1 (maintenant) : Kimi K2.5 gratuit via OpenRouter
+- Phase 2 (semaine prochaine) : Sonar Pro en 2eme passe verification
 
 ## N8N Workflows (4 superviseur)
-- [x] 4 fichiers JSON dans /data/n8n/workflows/
-- 01-planificateur : Cron 4h, 20 localites pending → OpenClaw
-- 02-controle-qualite : Cron 2h, anomalies + Kimi K2.5 → quality_checks
-- 03-rapport-quotidien : Cron 20h, stats → Kimi rapport → Telegram
-- 04-watchdog : Cron 30min, check infra → auto-fix → alertes Telegram
-- Statut : SQUELETTES JSON (pas encore importes dans n8n)
-- Doc : BRAIN/N8N/workflows.md
+- [x] 4 workflows IMPORTES ET ACTIFS dans n8n Docker
+- [x] Kimi K2.5 comme cerveau IA (Code nodes avec fetch OpenRouter)
+- [x] Telegram notifications (workflows 02, 03, 04)
+- [x] MariaDB accessible depuis Docker (extra_hosts + staging_user 172.%)
+- [x] OPENROUTER_API_KEY + TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID dans /data/n8n/.env
+
+| Workflow | Cron | Kimi | Telegram | Notes |
+|----------|------|------|----------|-------|
+| 01 Planificateur | 02h00 | Oui | Non | Analyse BDD, decide priorites |
+| 02 Controle Qualite | 06h00 | Oui | Oui | Doublons, hallucinations, qualite |
+| 03 Rapport Quotidien | 07h00 | Oui | Oui | KPI, progres, recommandations |
+| 04 Watchdog | 15min | Non | Si alerte | Stuck jobs, error rate, OpenRouter health |
+
+**IMPORTANT** : Les MySQL credentials dans les workflows ont id="create-in-ui". Il faut creer le credential MariaDB manuellement dans n8n UI (https://n8n.cblrs.net) puis l'assigner aux workflows.
+
+## Telegram Bot
+- Bot : @caballarius_vps2_bot ("Caballarius VPS2")
+- Chat ID : 8585838701 (Gero Nimo)
+- Usage : notifications unidirectionnelles (rapports, alertes watchdog)
+- Token dans /data/n8n/.env + BRAIN/CREDENTIALS
 
 ## Certificats SSL
 - cblrs.net + www.cblrs.net : valide jusqu'au 2026-05-19 (auto-renouvellement)
@@ -104,31 +128,30 @@ countries, regions, routes, stages, localities, route_localities, establishments
 ## CE QUI RESTE A FAIRE (prochaines sessions)
 ## ============================================================
 
-### PRIORITE 1 — Localites + Etapes : FAIT (sessions 7+8)
-- [x] 43 seeders PHP du VPS1 parses (parse_seeders.py) → 778 loc, 742 stages
-- [x] GPX/KML import des 305 routes (import_gpx.py) → 1599 geocodees via Nominatim
-- [x] complete_stages.py pour les 265 routes manquantes → 1053 stages supplementaires
-- [x] Support KMZ + GPX ajoute pour les 3 derniers fichiers atypiques
-- [x] 305/305 routes ont des etapes (0 manquante)
-- [x] 2356 localites, 1795 etapes, 2830 route_localities
-- [ ] Cross-reference avec nco.ign.es pour les etapes espagnoles
-- [ ] Peupler la table regions
+### PRIORITE 1 — Skills en cours (surveiller)
+- [x] Skill 01 (scrape establishments) tourne en nohup — surveiller progression
+- [x] Skill 06 (enrichir localites) tourne en nohup — surveiller progression
+- [ ] Verifier qualite des donnees apres 24h de scraping
+- [ ] Semaine prochaine : Sonar Pro en 2eme passe
 
-### PRIORITE 2 — Implementer le code des 8 skills
-- [ ] 01-scrape-google : Google Places API (NEED API KEY)
+### PRIORITE 2 — n8n configuration manuelle
+- [ ] Creer credential MySQL dans n8n UI (host=host.docker.internal, user=staging_user, pass=Stg!Cblrs2026_QC#Secure, db=caballarius_staging)
+- [ ] Assigner le credential aux 4 workflows
+- [ ] Tester manuellement chaque workflow depuis n8n UI
+
+### PRIORITE 3 — Implementer les skills restants
 - [ ] 02-scrape-facebook : Graph API ou browser scraping
 - [ ] 03-scrape-instagram : Browser tool, geoloc + hashtags
 - [ ] 04-scrape-tourisme : Fetch + parse offices tourisme
 - [ ] 05-scrape-forums : Gronze, Reddit, rate limit 1/3s
-- [ ] 06-enrichir-contenu : Kimi K2.5, langues dynamiques (structure prete)
 - [ ] 07-generer-site : Template HTML caballarius-v1
 - [ ] 08-sync-vps1 : API push avec retries
 
-### PRIORITE 3 — Infrastructure
-- [ ] Importer les 4 workflows dans n8n + configurer credentials
+### PRIORITE 4 — Infrastructure
 - [ ] Creer API key Google AI Studio (Gemini 2.5 Flash fallback)
 - [ ] Creer API key Google Places
-- [ ] Configurer Telegram bot (rapports + alertes)
 - [ ] Wildcard SSL via acme.sh + API Infomaniak
 - [ ] Template HTML Caballarius v1 dans /data/templates/
 - [ ] Ajouter jails Fail2Ban Nginx
+- [ ] Peupler table regions
+- [ ] Cross-reference nco.ign.es (etapes espagnoles)
